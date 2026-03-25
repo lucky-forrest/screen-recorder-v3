@@ -1,0 +1,15 @@
+# Core dependencies
+pynput>=1.7.0
+pygetwindow>=0.0.9
+pyautogui>=0.9.54
+
+# Computer vision and image processing
+opencv-python>=4.8.0
+Pillow>=10.0.0
+numpy>=1.24.0
+pytesseract>=0.3.10
+
+# GUI (built-in, no installation needed: tkinter)
+
+# Optional for performance
+tqdm>=4.66.0  # Progress bars

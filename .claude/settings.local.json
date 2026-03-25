@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(taskkill /F /IM python.exe)",
+      "Bash(xargs kill:*)",
+      "Bash(tasklist)",
+      "Bash(powershell -Command \"Get-Content videos\\\\20260324_182624_operation_video.mp4 -Encoding Byte | Select-Object -First 100 | ForEach-Object { '{0:X2}' -f $_ }\")",
+      "Bash(sed -i '259s/^            if .*/                self._log\\(f\"\"✓ 视频已生成: {video_path}\"\"\\)/' gui.py)",
+      "Bash(sed -i '260d' gui.py)",
+      "Bash(sed -i '262,264d' gui.py)",
+      "Bash(sed -i '264d' gui.py)",
+      "Bash(pkill -9 -f \"python gui.py\")",
+      "Bash(file data/*.json videos/*.mp4)",
+      "Bash(grep -E \"\\\\.py$|\\\\.bat$\")",
+      "Bash(npx:*)"
+    ]
+  }
+}

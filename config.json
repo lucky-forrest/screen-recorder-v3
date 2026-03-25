@@ -1,0 +1,21 @@
+{
+    "output": {
+        "csv": "./output",
+        "json": "./output",
+        "mp4": "./output"
+    },
+    "recording": {
+        "enabled": true,
+        "event_queue_size": 10000
+    },
+    "video": {
+        "enabled": true,
+        "framerate": 30,
+        "output_quality": 85
+    },
+    "ui_detection": {
+        "enabled": true,
+        "confidence_threshold": 0.7,
+        "element_detection_frequency": 0.1
+    }
+}
