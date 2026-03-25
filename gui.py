@@ -181,9 +181,6 @@ class OperationRecorderGUI:
             self._log(f"👆 已注册事件回调，请在键盘上操作...")
             print(f"[GUI] Ready - waiting for events")
 
-            # 注册录制事件回调到事件处理器
-            self.recorder.on_event(self._on_recorder_event)
-
             # 启动视频生成
             self.video_generator.start_generating(self.session_id)
 

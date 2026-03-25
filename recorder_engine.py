@@ -300,14 +300,6 @@ class RecorderEngine:
             except Exception:
                 pass
 
-    def on_status(self, callback: Callable[[str, dict], None]):
-        """注册状态回调
-
-        Args:
-            callback: 回调函数 (status_type, status_data)
-        """
-        self._status_callback = callback
-
     def _process_raw_event(self, event_data: dict):
         """处理原始事件数据
 
