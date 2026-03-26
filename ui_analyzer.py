@@ -8,6 +8,7 @@ from typing import Optional
 from data.event import OperationEvent, UIElementInfo, UIElementType
 import cv2
 import numpy as np
+from config.constants import UIAnalysisConfig
 
 
 class UIAnalyzer:
@@ -27,7 +28,7 @@ class UIAnalyzer:
         # 当前状态
         self.current_window_title: Optional[str] = None
         self.last_analysis_time = 0
-        self.analysis_interval = 0.1  # 100ms分析频率
+        self.analysis_interval = UIAnalysisConfig.ANALYSIS_INTERVAL
 
         # 元素缓存
         self.element_cache: dict = {}
@@ -97,7 +98,7 @@ class UIAnalyzer:
                 if self.recorder_engine and self.recorder_engine.is_recording:
                     self.recorder_engine._process_ui_interaction(x, y)
 
-        except Exception as e:
+        except (TypeError, AttributeError) as e:
             print(f"Error analyzing UI: {e}")
 
     def _analyze_screen_region(self, screen, region_center):
@@ -148,7 +149,7 @@ class UIAnalyzer:
                 if self.recorder_engine and self.recorder_engine.is_recording:
                     mouse_pos = position()
                     self.analyze_at_position(mouse_pos[0], mouse_pos[1], force=True)
-            except Exception:
+            except (TypeError, AttributeError):
                 pass
 
             # 控制频率

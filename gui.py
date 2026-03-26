@@ -8,10 +8,12 @@ from queue import Queue
 from typing import Optional
 from datetime import datetime, timedelta
 import os
+import time
 
 from recorder_engine import RecorderEngine
 from video_generator import VideoGenerator
 import utils.config_loader as config_loader
+from config.constants import GUIConfig
 
 
 class OperationRecorderGUI:
@@ -25,7 +27,7 @@ class OperationRecorderGUI:
         """
         self.root = root if root else tk.Tk()
         self.root.title("Advanced Computer Operation Recorder")
-        self.root.geometry("1000x700")
+        self.root.geometry(f"{GUIConfig.WINDOW_WIDTH}x{GUIConfig.WINDOW_HEIGHT}")
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
         # 加载配置
@@ -218,17 +220,20 @@ class OperationRecorderGUI:
         ttk.Label(
             center_frame,
             text="📦 正在保存文件...",
-            font=("Arial", 16, "bold"),
+             font=("Arial", 16, "bold"),
             foreground="#2196F3"
-        ).pack(pady=10)
+        ).pack(pady=15)
 
         action_frame = ttk.Frame(center_frame)
-        action_frame.pack(pady=10)
+        action_frame.pack(pady=5)
+
+        self.export_button.config(state=tk.DISABLED)
 
         self.export_button.config(state=tk.DISABLED)
 
         def on_confirm():
             confirm_window.destroy()
+            self.stop_button.config(state=tk.DISABLED)
             self._stop_recording_impl()
 
         def on_cancel():
@@ -329,7 +334,6 @@ class OperationRecorderGUI:
             video_path = self.video_generator.get_video_path()
 
             # 获取输出文件夹路径（绝对路径）
-            import os
             config = config_loader.load_config()
             # 支持新旧两种配置格式
             if config.get("output"):
@@ -352,7 +356,7 @@ class OperationRecorderGUI:
                     try:
                         os.startfile(data_folder)
                         self._log(f"📂 已打开文件夹: {data_folder}")
-                    except Exception as e:
+                    except (OSError, FileNotFoundError) as e:
                         self._log(f"⚠ 无法打开文件夹: {e}")
                 else:
                     self._log(f"⚠ 数据文件夹不存在: {data_folder}")
@@ -377,13 +381,6 @@ class OperationRecorderGUI:
                     f"  • 会话ID: {self.session_id}"
                 )
             else:
-                messagebox.showwarning(
-                    "⚠ 导出部分完成",
-                    f"部分文件未能正常生成\n\n"
-                    f"请检查程序日志查看详细错误信息。\n"
-                    f"会话ID: {self.session_id}\n"
-                    f"点击打开文件夹"
-                )
                 if os.path.exists(data_folder):
                     os.startfile(data_folder)
 
@@ -448,7 +445,7 @@ class OperationRecorderGUI:
                 if event_diff > 0:
                     self.event_count += event_diff
                     self.event_count_label.config(text=f"事件数量: {self.event_count}")
-            except Exception:
+            except (AttributeError, TypeError):
                 pass
 
             # 更新录制时长
@@ -458,8 +455,8 @@ class OperationRecorderGUI:
             # 实时预览（简化版）
             self._update_preview()
 
-        # 10ms后再次调用
-        self.root.after(10, self._update_gui_loop)
+        # STATUS_TEXT_UPDATE_INTERVAL秒后再次调用
+        self.root.after(GUIConfig.STATUS_TEXT_UPDATE_INTERVAL, self._update_gui_loop)
 
     def _start_saving_animation(self):
         """开始显示保存动画"""

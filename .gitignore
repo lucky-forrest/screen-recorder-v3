@@ -88,3 +88,6 @@ secrets.json
 .mypy_cache/
 .dmypy.json
 dmypy.json
+
+# output
+output/

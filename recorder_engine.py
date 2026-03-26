@@ -197,12 +197,12 @@ class RecorderEngine:
                             f"{element_content}\n"
                         )
                         f.write(line)
-                    except Exception as e:
+                    except (IOError, OSError) as e:
                         print(f"Error writing event to CSV: {e}")
 
             print(f"✓ CSV文件已保存: {filepath}")
             return True
-        except Exception as e:
+        except (IOError, OSError, json.JSONDecodeError) as e:
             print(f"✗ 保存CSV失败: {e}")
             return False
 
@@ -245,7 +245,7 @@ class RecorderEngine:
 
             print(f"✓ JSON文件已保存: {filepath}")
             return True
-        except Exception as e:
+        except (IOError, OSError, json.JSONDecodeError) as e:
             print(f"✗ 保存JSON失败: {e}")
             return False
 
@@ -276,7 +276,7 @@ class RecorderEngine:
         if self._event_callback:
             try:
                 self._event_callback(event)
-            except Exception as e:
+            except (TypeError, AttributeError) as e:
                 print(f"[RecorderEngine] Error in event callback: {e}")
 
     def on_status(self, callback: Callable[[str, dict], None]):
@@ -297,7 +297,7 @@ class RecorderEngine:
         if self._status_callback:
             try:
                 self._status_callback(status_type, status_data)
-            except Exception:
+            except (TypeError, AttributeError):
                 pass
 
     def _process_raw_event(self, event_data: dict):
@@ -323,9 +323,6 @@ class RecorderEngine:
                 op_event = self._create_operation_event_from_mouse(event_data)
             elif event_type == "mouse_move":
                 # 鼠标移动时也添加事件用于截图
-                from data.event import MouseEvent
-                from data.event import MouseButton
-                from data.event import EventType
                 op_event = OperationEvent(
                     event_type=EventType.MOUSE_MOVE,
                     detail=f"Mouse at ({x}, {y})",
@@ -373,7 +370,7 @@ class RecorderEngine:
 
             try:
                 self._trigger_callbacks(op_event)
-            except Exception:
+            except (TypeError, AttributeError):
                 pass
 
     def _create_operation_event_from_keyboard(self, event_data: dict, element_info: UIElementInfo = None) -> Optional[OperationEvent]:

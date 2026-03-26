@@ -105,7 +105,7 @@ class DropdownDetector(BaseUIDetector):
             cv2.line(arrow, (13, 12), (9, 8), 255, 2)
 
             return arrow
-        except Exception:
+        except (cv2.error, TypeError, ValueError) as e:
             return None
 
     def _analyze_gradient_patterns(self, image: np.ndarray) -> bool:

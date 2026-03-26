@@ -12,6 +12,7 @@ from pathlib import Path
 from data.event import OperationEvent
 import utils.timestamp_manager as timestamp_manager
 import utils.path_manager as path_manager
+from config.constants import VideoConfig
 
 
 class VideoGenerator:
@@ -121,7 +122,7 @@ class VideoGenerator:
     def _init_video_writer(self):
         """初始化视频写入器"""
         resolution = self._set_resolution()
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        fourcc = cv2.VideoWriter_fourcc(*VideoConfig.VIDEO_CODEC)
         self.current_video_writer = cv2.VideoWriter(
             self.video_path,
             fourcc,

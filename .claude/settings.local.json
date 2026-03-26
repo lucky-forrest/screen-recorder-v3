@@ -13,7 +13,9 @@
       "Bash(pkill -9 -f \"python gui.py\")",
       "Bash(file data/*.json videos/*.mp4)",
       "Bash(grep -E \"\\\\.py$|\\\\.bat$\")",
-      "Bash(npx:*)"
+      "Bash(npx:*)",
+      "Bash(ls:*)",
+      "Bash(cd:*)"
     ]
   }
 }
