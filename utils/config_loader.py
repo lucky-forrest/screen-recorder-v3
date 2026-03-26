@@ -41,20 +41,20 @@ def _ensure_output_dirs(config: Dict[str, Any]):
     if "output" in config:
         output_config = config["output"]
 
-        # 创建主output目录
-        main_dir = output_config.get("path")
-        if main_dir:
-            Path(main_dir).mkdir(parents=True, exist_ok=True)
+        # 创建csv输出目录
+        csv_dir = output_config.get("csv")
+        if csv_dir:
+            Path(csv_dir).mkdir(parents=True, exist_ok=True)
 
-        # 创建data子目录
-        data_dir = output_config.get("data")
-        if data_dir:
-            Path(data_dir).mkdir(parents=True, exist_ok=True)
+        # 创建json输出目录
+        json_dir = output_config.get("json")
+        if json_dir:
+            Path(json_dir).mkdir(parents=True, exist_ok=True)
 
-        # 创建videos子目录
-        videos_dir = output_config.get("videos")
-        if videos_dir:
-            Path(videos_dir).mkdir(parents=True, exist_ok=True)
+        # 创建mp4输出目录
+        mp4_dir = output_config.get("mp4")
+        if mp4_dir:
+            Path(mp4_dir).mkdir(parents=True, exist_ok=True)
 
 
 def _get_default_config() -> Dict[str, Any]:
@@ -65,9 +65,9 @@ def _get_default_config() -> Dict[str, Any]:
     """
     return {
         "output": {
-            "path": "./output",
-            "data": "./output",
-            "videos": "./output"
+            "csv": "./output/csv",
+            "json": "./output/json",
+            "mp4": "./output/mp4"
         },
         "recording": {
             "enabled": True,

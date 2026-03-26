@@ -9,6 +9,8 @@ from typing import Optional
 from datetime import datetime, timedelta
 import os
 import time
+import threading  # 新增：异步执行导出逻辑
+import shutil  # 新增：文件大小检测辅助
 
 from recorder_engine import RecorderEngine
 from video_generator import VideoGenerator
@@ -38,12 +40,21 @@ class OperationRecorderGUI:
         self.session_id: Optional[str] = None
         self.event_count = 0
         self.recording_start_time: Optional[datetime] = None
-        self.is_exporting = False
+        self.is_exporting = False  # 新增：标记是否正在导出
 
         # 保存动画相关
         self.save_indicator_id = None
         self.save_step = 0
         self._save_animation_running = False
+        self.export_progress = 0  # 新增：真实导出进度（0-100）
+        self.current_export_step = ""  # 新增：当前导出步骤描述
+
+        # 导出文件路径缓存（用于检测生成状态）
+        self.export_file_paths = {
+            "csv": None,
+            "json": None,
+            "video": None
+        }
 
         # 初始化录制引擎和视频生成器
         self.video_generator = VideoGenerator()
@@ -93,7 +104,7 @@ class OperationRecorderGUI:
         self.export_button = ttk.Button(
             title_frame,
             text="导出数据",
-            command=self._export_data,
+            command=lambda: self._export_data(show_animation=True),
             state=tk.DISABLED
         )
         self.export_button.pack(side=tk.LEFT, padx=5)
@@ -219,8 +230,8 @@ class OperationRecorderGUI:
 
         ttk.Label(
             center_frame,
-            text="📦 正在保存文件...",
-             font=("Arial", 16, "bold"),
+            text="📦 确定要停止录制并保存文件吗？",
+            font=("Arial", 14),
             foreground="#2196F3"
         ).pack(pady=15)
 
@@ -229,12 +240,30 @@ class OperationRecorderGUI:
 
         self.export_button.config(state=tk.DISABLED)
 
-        self.export_button.config(state=tk.DISABLED)
-
         def on_confirm():
             confirm_window.destroy()
             self.stop_button.config(state=tk.DISABLED)
-            self._stop_recording_impl()
+            
+            # 关键修复：立即同步停止视频生成器（保证视频截止时间准确）
+            try:
+                self.video_generator.stop_generating()
+                self._log("⏹️ 已立即停止视频录制")
+            except Exception as e:
+                self._log(f"❌ 停止视频生成器失败: {e}")
+            
+            # 立即标记录制状态为停止（防止后续事件被录制）
+            self.is_recording = False
+            self._update_status()
+            
+            # 立即启动保存动画
+            self._start_saving_animation()
+            
+            # 异步执行剩余的停止逻辑（录制引擎停止、导出等）
+            stop_thread = threading.Thread(target=self._stop_recording_impl, daemon=True)
+            stop_thread.start()
+
+            # 给录制引擎一点时间来处理停止信号（确保不会有残留事件被录制）
+            time.sleep(0.1)
 
         def on_cancel():
             confirm_window.destroy()
@@ -244,171 +273,257 @@ class OperationRecorderGUI:
         ttk.Button(action_frame, text="取消", command=on_cancel).pack(side=tk.LEFT, padx=10)
 
     def _stop_recording_impl(self):
-        """执行停止录制的实际逻辑"""
+        """执行停止录制的实际逻辑（异步）"""
         try:
-            # 停止视频生成
-            self.video_generator.stop_generating()
-
-            # 停止录制引擎
+            # 停止录制引擎（此时视频已提前停止）
+            self.root.after(0, lambda: self._log("⏹️ 停止录制引擎..."))
             events = self.recorder.stop_recording()
-
-            # 开始导出数据（现在有动画了）
-            self._export_data()
-
-            self.is_recording = False
-
-            # 更新按钮状态
-            self.start_button.config(state=tk.NORMAL)
-            self.pause_button.config(state=tk.DISABLED)
-            self.stop_button.config(state=tk.DISABLED)
-            self.export_button.config(state=tk.NORMAL)
-
-            # 更新状态和日志
-            self._update_status()
+            
+            # 更新按钮状态（UI线程）
+            self.root.after(0, lambda: self.start_button.config(state=tk.NORMAL))
+            self.root.after(0, lambda: self.pause_button.config(state=tk.DISABLED))
+            
+            # 记录停止信息
+            self.root.after(0, lambda: self._log(f"✅ 录制结束: 会话 {self.session_id}"))
+            self.root.after(0, lambda: self._log(f"📊 事件统计: 共捕获 {len(events)} 个事件"))
             elapsed = (datetime.now() - self.recording_start_time).total_seconds() if self.recording_start_time else 0
-            self._log(f"✅ 录制结束: 会话 {self.session_id}")
-            self._log(f"📊 事件统计: 共捕获 {len(events)} 个事件")
-            self._log(f"⏱️ 录制时长: {format_duration(int(elapsed))}")
-
-            # 显示完成弹窗
-            elapsed_str = format_duration(int(elapsed))
-            messagebox.showinfo(
-                "✨ 录制完成",
-                f"所有文件已成功保存！\n\n"
-                f"📝 日志文件: Event Log\n"
-                f"🎬 视频文件: Operation Video\n"
-                f"📊 事件数量: {len(events)}\n"
-                f"⏱️ 录制时长: {elapsed_str}"
-            )
+            self.root.after(0, lambda: self._log(f"⏱️ 录制时长: {format_duration(int(elapsed))}"))
+            
+            # 启动导出
+            self.root.after(0, lambda: self._export_data(show_animation=False))
 
         except Exception as e:
-            self._log(f"❌ 停止录制失败: {e}")
-            messagebox.showerror("错误", f"无法停止录制: {e}")
-            self.export_button.config(state=tk.NORMAL)
+            self.root.after(0, lambda: self._log(f"❌ 停止录制失败: {e}"))
+            self.root.after(0, lambda: messagebox.showerror("错误", f"无法停止录制: {e}"))
+            self.root.after(0, lambda: self.export_button.config(state=tk.NORMAL))
+            self.root.after(0, self._stop_saving_animation)
 
     def _export_data(self, show_animation=True):
-        """导出数据
+        """导出数据（异步执行）
 
         Args:
             show_animation: 是否显示保存动画（只在停止录制时显示）
         """
         if not self.session_id:
-            messagebox.showwarning("警告", "没有正在录制的会话")
+            self.root.after(0, lambda: messagebox.showwarning("警告", "没有正在录制的会话"))
+            return
+        
+        if self.is_exporting:
+            self.root.after(0, lambda: self._log("⚠ 已有导出任务正在执行，请等待完成"))
             return
 
-        try:
-            if show_animation:
-                # 开始保存动画
-                self._start_saving_animation()
+        self.is_exporting = True
+        self.root.after(0, lambda: self.export_button.config(state=tk.DISABLED))
+        self.export_progress = 0  # 重置进度
+        self.current_export_step = "准备导出..."
 
-            self._log("📥 开始导出数据...")
+        # 启动保存动画（如果需要）
+        if show_animation:
+            self.root.after(0, self._start_saving_animation)
 
-            events_already_saved = []
-            # 导出CSV
-            if self.recorder.save_to_csv():
-                self._log("✓ CSV文件已生成")
-                events_already_saved.append("CSV")
-            else:
-                self._log("✗ CSV文件生成失败")
+        # 异步执行导出逻辑
+        def export_worker():
+            """后台导出线程（分步骤更新进度）"""
+            try:
+                # 步骤1：准备导出（进度10%）
+                self.export_progress = 10
+                self.current_export_step = "准备导出数据..."
+                self.root.after(0, lambda: self._log("📥 开始导出数据..."))
+                time.sleep(0.5)
 
-            # 导出JSON
-            if self.recorder.save_to_json():
-                self._log("✓ JSON文件已生成")
-                events_already_saved.append("JSON")
-            else:
-                self._log("✗ JSON文件生成失败")
+                # 重置文件路径缓存
+                self.export_file_paths = {
+                    "csv": None,
+                    "json": None,
+                    "video": None
+                }
 
-            # 导出视频
-            if self.is_recording:  # 确保录制状态为True
-                video_path = self.video_generator.get_video_path()
-                # 添加结束事件
-                self.video_generator.stop_generating(wait=True)
-                self._log("🎬 正在生成视频...")
-            else:
-                video_path = self.video_generator.get_video_path()
-                self._log("⚠ 未检测到录制事件，视频可能为空")
-
-            import time
-            time.sleep(1)  # 等待视频生成
-
-            video_path = self.video_generator.get_video_path()
-
-            # 获取输出文件夹路径（绝对路径）
-            config = config_loader.load_config()
-            # 支持新旧两种配置格式
-            if config.get("output"):
-                if "json" in config["output"]:
-                    data_folder_str = config["output"]["json"]
+                # 步骤2：导出CSV（进度20%-40%）
+                self.export_progress = 20
+                self.current_export_step = "正在保存CSV文件..."
+                self.root.after(0, lambda: self._log("📝 导出CSV文件..."))
+                csv_path = self.recorder.save_to_csv()
+                time.sleep(0.8)  # 模拟处理时间（可根据实际调整）
+                self.export_progress = 40
+                
+                if csv_path and os.path.exists(csv_path):
+                    self.export_file_paths["csv"] = csv_path
+                    self.root.after(0, lambda: self._log("✓ CSV文件已生成"))
                 else:
-                    data_folder_str = config["output"].get("data", config.get("paths", {}).get("data", "./output"))
+                    self.root.after(0, lambda: self._log("✗ CSV文件生成失败"))
+
+                # 步骤3：导出JSON（进度40%-60%）
+                self.export_progress = 40
+                self.current_export_step = "正在保存JSON文件..."
+                self.root.after(0, lambda: self._log("📝 导出JSON文件..."))
+                json_path = self.recorder.save_to_json()
+                time.sleep(0.8)  # 模拟处理时间
+                self.export_progress = 60
+                
+                if json_path and os.path.exists(json_path):
+                    self.export_file_paths["json"] = json_path
+                    self.root.after(0, lambda: self._log("✓ JSON文件已生成"))
+                else:
+                    self.root.after(0, lambda: self._log("✗ JSON文件生成失败"))
+
+                # 步骤4：处理视频生成（进度60%-90%）
+                self.export_progress = 60
+                self.current_export_step = "正在生成视频文件..."
+                self.root.after(0, lambda: self._log("🎬 正在生成视频..."))
+                video_path = self.video_generator.get_video_path()
+                self.export_file_paths["video"] = video_path
+
+                # 等待视频文件生成完成（轮询检测）
+                max_wait = 30  # 最大等待30秒
+                wait_count = 0
+                progress_step = 30 / max_wait  # 每0.5秒增加的进度
+                while wait_count < max_wait:
+                    if (video_path and os.path.exists(video_path) and 
+                        os.path.getsize(video_path) > 10240):  # 大于10KB视为有效
+                        break
+                    time.sleep(0.5)
+                    wait_count += 0.5
+                    self.export_progress = min(90, 60 + (wait_count * progress_step))
+
+                self.export_progress = 90
+                # 检测视频文件状态
+                if video_path and os.path.exists(video_path) and os.path.getsize(video_path) > 10240:
+                    self.root.after(0, lambda: self._log(f"✓ 视频文件已生成 ({(os.path.getsize(video_path)/1024/1024):.1f} MB)"))
+                else:
+                    self.root.after(0, lambda: self._log("⚠ 视频时长过短或未检测到录制事件"))
+                    self.root.after(0, lambda: self._log("💡 建议：录制时至少进行1-2次鼠标点击或键盘操作"))
+
+                # 步骤5：最终校验（进度90%-100%）
+                self.export_progress = 90
+                self.current_export_step = "校验文件完整性..."
+                self.root.after(0, lambda: self._log("✅ 校验文件完整性..."))
+                time.sleep(0.5)
+                self.export_progress = 100
+
+                # 等待所有文件生成完成后，停止动画并更新UI
+                self.root.after(0, self._finalize_export)
+
+            except Exception as e:
+                import traceback
+                error_msg = f"❌ 导出失败: {e}\n{traceback.format_exc()}"
+                self.root.after(0, lambda: self._log(error_msg))
+                self.root.after(0, lambda: messagebox.showerror("错误", f"导出失败: {e}\n\n详细信息已记录在日志中"))
+                self.root.after(0, self._stop_saving_animation)
+                self.root.after(0, lambda: self._reset_export_state())
+
+        # 启动后台线程
+        export_thread = threading.Thread(target=export_worker, daemon=True)
+        export_thread.start()
+
+    def _check_all_files_ready(self):
+        """检查所有导出文件是否已就绪"""
+        # 检查CSV
+        csv_ready = False
+        if self.export_file_paths["csv"] and os.path.exists(self.export_file_paths["csv"]):
+            csv_ready = os.path.getsize(self.export_file_paths["csv"]) > 0
+
+        # 检查JSON
+        json_ready = False
+        if self.export_file_paths["json"] and os.path.exists(self.export_file_paths["json"]):
+            json_ready = os.path.getsize(self.export_file_paths["json"]) > 0
+
+        # 检查视频（允许空但需存在）
+        video_ready = False
+        if self.export_file_paths["video"]:
+            video_ready = os.path.exists(self.export_file_paths["video"])
+
+        return csv_ready and json_ready and video_ready
+
+    def _finalize_export(self):
+        """完成导出流程（UI线程执行）"""
+        # 等待所有文件就绪（最终确认）
+        wait_count = 0
+        while not self._check_all_files_ready() and wait_count < 10:
+            time.sleep(0.5)
+            wait_count += 1
+
+        # 确保进度到100%
+        self.export_progress = 100
+        self.current_export_step = "导出完成！"
+        time.sleep(0.5)  # 让用户看到100%进度
+
+        # 停止保存动画
+        self._stop_saving_animation()
+        
+        # 获取输出文件夹路径
+        config = config_loader.load_config()
+        if config.get("output"):
+            csv_dir = config["output"].get("csv", None)
+            json_dir = config["output"].get("json", None)
+            mp4_dir = config["output"].get("mp4", None)
+
+            # 优先使用CSV目录，其次JSON目录，最后MP4目录
+            for data_folder_str in [csv_dir, json_dir, mp4_dir]:
+                if data_folder_str:
+                    data_folder = os.path.abspath(data_folder_str)
+                    break
             else:
-                data_folder_str = config.get("paths", {}).get("data", "./output")
+                # 兼容旧格式
+                data_folder_str = config["output"].get("data",
+                    config.get("paths", {}).get("data", "./output"))
+                data_folder = os.path.abspath(data_folder_str)
+        else:
+            data_folder_str = config.get("paths", {}).get("data", "./output")
             data_folder = os.path.abspath(data_folder_str)
 
-            # 检查文件是否成功生成
-            files_generated = []
-            if video_path and os.path.exists(video_path) and os.path.getsize(video_path) > 10240:
-                self._log(f"✓ 视频文件已生成 ({(os.path.getsize(video_path)/1024/1024):.1f} MB)")
+        # 整理生成的文件列表
+        files_generated = []
+        if self.export_file_paths["csv"] and os.path.exists(self.export_file_paths["csv"]):
+            files_generated.append("CSV文件")
+        if self.export_file_paths["json"] and os.path.exists(self.export_file_paths["json"]):
+            files_generated.append("JSON文件")
+        if self.export_file_paths["video"] and os.path.exists(self.export_file_paths["video"]):
+            if os.path.getsize(self.export_file_paths["video"]) > 10240:
                 files_generated.append("视频文件")
-
-                # 尝试自动打开文件夹
-                if os.path.exists(data_folder):
-                    try:
-                        os.startfile(data_folder)
-                        self._log(f"📂 已打开文件夹: {data_folder}")
-                    except (OSError, FileNotFoundError) as e:
-                        self._log(f"⚠ 无法打开文件夹: {e}")
-                else:
-                    self._log(f"⚠ 数据文件夹不存在: {data_folder}")
             else:
-                self._log("⚠ 视频时长过短或未检测到录制事件")
-                self._log("💡 建议：录制时至少进行1-2次鼠标点击或键盘操作")
                 files_generated.append("视频文件（可能为空）")
 
-            if show_animation:
-                # 停止保存动画
-                self._stop_saving_animation()
-                self._update_status()
+        events = self.recorder.get_session_events()
+        elapsed = (datetime.now() - self.recording_start_time).total_seconds() if self.recording_start_time else 0
+        elapsed_str = format_duration(int(elapsed))
 
-            # 根据导出结果显示不同消息
-            files_display = ", ".join(files_generated)
-            if len(files_generated) >= 2:
-                messagebox.showinfo(
-                    "✅ 导出成功",
-                    f"所有文件已成功保存到 {data_folder}！\n\n"
-                    f"📋 已生成文件:\n"
-                    f"  • {files_display}\n"
-                    f"  • 会话ID: {self.session_id}"
-                )
-            else:
-                if os.path.exists(data_folder):
-                    os.startfile(data_folder)
+        # 显示导出结果
+        messagebox.showinfo(
+            "✨ 录制完成",
+            f"所有文件已成功保存！\n\n"
+            f"📝 日志文件: Event Log\n"
+            f"🎬 视频文件: Operation Video\n"
+            f"📊 事件数量: {len(events)}\n"
+            f"⏱️ 录制时长: {elapsed_str}"
+        )
 
-                if len(events_already_saved) >= 1:
-                    events_text = ", ".join(events_already_saved)
-                    messagebox.showinfo(
-                        "部分导出",
-                        f"部分文件已成功生成！\n\n"
-                        f"已生成: {events_text}\n\n"
-                        f"请查看data文件夹中的文件"
-                    )
+        # 自动打开文件夹
+        if os.path.exists(data_folder):
+            try:
+                os.startfile(data_folder)
+                self._log(f"📂 已打开文件夹: {data_folder}")
+            except (OSError, FileNotFoundError) as e:
+                self._log(f"⚠ 无法打开文件夹: {e}")
 
-        except Exception as e:
-            import traceback
-            self._log(f"❌ 导出失败: {e}")
-            self._log(traceback.format_exc())
-            messagebox.showerror("错误", f"导出失败: {e}\n\n详细信息已记录在日志中")
-            if show_animation:
-                self._stop_saving_animation()
+        # 重置导出状态
+        self._reset_export_state()
+
+    def _reset_export_state(self):
+        """重置导出状态"""
+        self.is_exporting = False
+        self.export_progress = 0
+        self.current_export_step = ""
+        self.root.after(0, lambda: self.export_button.config(state=tk.NORMAL))
+        self.root.after(0, self._update_status)
 
     def _update_status(self):
         """更新状态显示"""
         if self.is_recording:
-            self.status_label.config(text="状态: 录制中 (Recording)")
-            self.status_label.config(foreground="green")
+            self.status_label.config(text="状态: 录制中 (Recording)", foreground="green")
+        elif self.is_exporting:
+            self.status_label.config(text=f"状态: 导出中 (Exporting) - {self.current_export_step}", foreground="#FF9800")
         else:
-            self.status_label.config(text="状态: 待机 (Standby)")
-            self.status_label.config(foreground="black")
+            self.status_label.config(text="状态: 待机 (Standby)", foreground="black")
 
         if self.session_id:
             self.session_label.config(text=f"会话ID: {self.session_id}")
@@ -416,14 +531,9 @@ class OperationRecorderGUI:
             self.session_label.config(text="会话ID: -")
 
         self.event_count_label.config(text=f"事件数量: {self.event_count}")
-        # 录制时长更新在循环中进行
 
     def _log(self, message: str):
-        """添加日志
-
-        Args:
-            message: 日志消息
-        """
+        """添加日志"""
         timestamp = datetime.now().strftime("%H:%M:%S")
         log_msg = f"[{timestamp}] {message}"
 
@@ -431,14 +541,12 @@ class OperationRecorderGUI:
         self.log_text.insert(tk.END, log_msg + "\n")
         self.log_text.see(tk.END)
         self.log_text.config(state=tk.DISABLED)
-
-        # 更新控制台输出
         print(log_msg)
 
     def _update_gui_loop(self):
         """更新GUI循环"""
         if self.is_recording:
-            # 更新事件计数（从录制引擎获取）
+            # 更新事件计数
             try:
                 events = self.recorder.get_session_events()
                 event_diff = len(events) - self.event_count
@@ -452,16 +560,20 @@ class OperationRecorderGUI:
             elapsed = (datetime.now() - self.recording_start_time).total_seconds()
             self.recording_time_label.config(text=f"录制时长: {format_duration(int(elapsed))}")
 
-            # 实时预览（简化版）
+            # 实时预览
             self._update_preview()
 
-        # STATUS_TEXT_UPDATE_INTERVAL秒后再次调用
+        # 持续更新状态（包括导出进度）
+        self._update_status()
+        
         self.root.after(GUIConfig.STATUS_TEXT_UPDATE_INTERVAL, self._update_gui_loop)
 
     def _start_saving_animation(self):
         """开始显示保存动画"""
         self._save_animation_running = True
         self.save_step = 0
+        self.export_progress = 0
+        self.current_export_step = "准备导出..."
         self._update_save_animation()
 
     def _stop_saving_animation(self):
@@ -470,56 +582,81 @@ class OperationRecorderGUI:
         if self.save_indicator_id:
             self.root.after_cancel(self.save_indicator_id)
             self.save_indicator_id = None
+        # 清空动画区域
+        self.preview_canvas.delete("save_indicator")
+        # 恢复预览显示
+        self._update_preview()
 
     def _update_save_animation(self):
-        """更新保存动画"""
+        """更新保存动画（基于真实进度）"""
         if not self._save_animation_running:
             return
 
         # 清空保存指示器区域
         self.preview_canvas.delete("save_indicator")
+        self.preview_canvas.delete("preview")  # 清空预览内容
 
-        # 动画步骤：0=保存.gif 1=保存✓ 2=完成.gif 3=清空
-        messages = [
-            "💾 正在保存文件...",
-            "⏳ 处理中...",
-            "✨ 正在生成视频...",
-            ""
-        ]
+        # 绘制背景
+        self.preview_canvas.create_rectangle(
+            0, 0, 980, 200,
+            fill="#2d2d2d",
+            outline="",
+            tags="save_indicator"
+        )
 
-        # 使用交替颜色
-        colors = ["#2196F3", "#4CAF50", "#FF9800", "#888888"]
+        # 定义步骤颜色映射
+        step_colors = {
+            "准备导出...": "#2196F3",
+            "正在保存CSV文件...": "#4CAF50",
+            "正在保存JSON文件...": "#FF9800",
+            "正在生成视频文件...": "#9C27B0",
+            "校验文件完整性...": "#607D8B",
+            "导出完成！": "#4CAF50"
+        }
+        current_color = step_colors.get(self.current_export_step, "#2196F3")
 
-        # 绘制动画文字
-        message = messages[self.save_step % 4]
-        color = colors[self.save_step % 4]
-
-        y = 60
-        x = 500
+        # 绘制当前步骤文字
         self.preview_canvas.create_text(
-            x, y,
-            text=message,
-            fill=color if message else "#888888",
+            490, 80,
+            text=self.current_export_step,
+            fill=current_color,
             font=("Arial", 16, "bold"),
             tags="save_indicator"
         )
 
-        # 添加闪烁效果
-        if self.save_step % 4 < 3:
-            if self.save_step % 2 == 0:
-                self.preview_canvas.create_text(
-                    x, y + 25,
-                    text="━━━━━━━━━━━━━━━━━━━━",
-                    fill=color,
-                    font=("Arial", 12),
-                    tags="save_indicator"
-                )
+        # 添加加载进度条效果
+        bar_length = 600
+        bar_x = (980 - bar_length) // 2
+        progress_width = int(bar_length * (self.export_progress / 100))
+        
+        # 背景条
+        self.preview_canvas.create_rectangle(
+            bar_x, 120, bar_x + bar_length, 140,
+            fill="#444444", outline="#666666", tags="save_indicator"
+        )
+        # 进度条
+        self.preview_canvas.create_rectangle(
+            bar_x, 120, bar_x + progress_width, 140,
+            fill=current_color, outline="", tags="save_indicator"
+        )
+        # 进度文本
+        self.preview_canvas.create_text(
+            490, 155,
+            text=f"进度: {self.export_progress:.0f}%",
+            fill="white",
+            font=("Arial", 12, "bold"),
+            tags="save_indicator"
+        )
 
-        self.save_step += 1
-        self.save_indicator_id = self.root.after(800, self._update_save_animation)
+        # 继续更新动画（300ms刷新一次，更流畅）
+        self.save_indicator_id = self.root.after(300, self._update_save_animation)
 
     def _update_preview(self):
         """更新实时预览"""
+        # 如果动画正在运行，跳过预览更新（避免冲突）
+        if self._save_animation_running:
+            return
+
         # 清空画布
         self.preview_canvas.delete("all")
 
@@ -564,49 +701,45 @@ class OperationRecorderGUI:
         if events:
             last_event = events[-1]
             if last_event.coordinates != (0, 0):
-                last_event.element_info
                 x, y = last_event.coordinates
                 coord_text = f"Position: ({x}, {y})"
                 self.preview_canvas.create_text(
-                    20, y_offset + 10,
+                    490, 180,
                     text=coord_text,
-                    fill="#888888",
-                    anchor=tk.W,
-                    font=("Arial", 9)
+                    fill="#FFFFFF",
+                    font=("Arial", 10),
+                    tags="preview"
                 )
 
     def _on_recorder_event(self, event):
-        """处理录制事件的回调
-
-        Args:
-            event: OperationEvent对象
-        """
-        self.event_count += 1
+        """录制事件回调"""
+        # 可在这里处理实时事件更新
+        pass
 
     def _on_close(self):
-        """窗口关闭事件"""
+        """窗口关闭回调"""
         if self.is_recording:
-            if messagebox.askokcancel("退出", "录制正在进行，确定要退出吗？"):
-                self._stop_recording()
+            if messagebox.askyesno("确认退出", "当前正在录制中，确定要退出吗？"):
+                # 立即停止视频生成
+                self.video_generator.stop_generating()
+                self._stop_recording_impl()
+                self.root.destroy()
+        elif self.is_exporting:
+            messagebox.showwarning("导出中", "当前正在导出数据，请等待完成后再退出")
+        else:
+            self.root.destroy()
 
-        self.root.destroy()
 
-
+# 辅助函数：格式化时长
 def format_duration(seconds: int) -> str:
-    """格式化持续时间
-
-    Args:
-        seconds: 秒数
-
-    Returns:
-        str: 格式化字符串
-    """
-    hours, remainder = divmod(seconds, 3600)
-    minutes, secs = divmod(remainder, 60)
+    """将秒数格式化为 HH:MM:SS"""
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+    secs = seconds % 60
     return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
 
+# 主程序入口
 if __name__ == "__main__":
-    # 创建并运行GUI
     app = OperationRecorderGUI()
     app.root.mainloop()

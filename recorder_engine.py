@@ -340,7 +340,7 @@ class RecorderEngine:
 
 
             else:
-                print(f"[DEBUG] Unknown event type: {event_type}")
+                print(f"[EventProcessor] Unknown event type: {event_type}")
 
         except Exception as e:
             print(f"Error processing event: {e}")

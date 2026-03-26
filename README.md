@@ -73,11 +73,11 @@ python gui.py
    - 视频会在后台生成
 
 5. **查看结果**
-   - CSV文件：`output/<session_id>_operation_log.csv`
-   - JSON文件：`output/<session_id>_operation_log.json`
-   - 视频文件：`output/<session_id>_operation_video.mp4`
+   - CSV文件：`output/csv/<session_id>_operation_log.csv`
+   - JSON文件：`output/json/<session_id>_operation_log.json`
+   - 视频文件：`output/mp4/<session_id>_operation_video.mp4`
 
-   所有生成的文件会自动保存到 `output/` 文件夹中。
+   所有生成的文件会自动保存到对应的子文件夹中。
 
 ### 命令行使用
 

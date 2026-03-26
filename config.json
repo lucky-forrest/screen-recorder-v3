@@ -1,8 +1,8 @@
 {
     "output": {
-        "csv": "./output",
-        "json": "./output",
-        "mp4": "./output"
+        "csv": "./output/csv",
+        "json": "./output/json",
+        "mp4": "./output/mp4"
     },
     "recording": {
         "enabled": true,

@@ -89,19 +89,3 @@ class FileManager:
             return []
 
         return list(dir_path.glob(pattern))
-
-
-if __name__ == "__main__":
-    fm = FileManager(".")
-
-    # 测试目录创建
-    test_dir = fm.ensure_directory("logs", "test")
-    print(f"Created directory: {test_dir}")
-
-    # 测试临时文件
-    tmp_file = fm.create_temp_file("test", ".txt")
-    print(f"Created temp file: {tmp_file}")
-
-    # 测试清理
-    cleaned = fm.cleanup_directory("temp", max_age_hours=0)
-    print(f"Cleaned {cleaned} old files")
