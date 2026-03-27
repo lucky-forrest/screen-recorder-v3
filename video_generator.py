@@ -39,6 +39,7 @@ class VideoGenerator:
         self.event_queue: Queue = Queue()
         self._generator_thread: Optional[threading.Thread] = None
         self._is_generating = False
+        self._generation_complete = False  # 新增：视频生成完成标志
         self.current_video_writer: Optional[cv2.VideoWriter] = None
         self.video_path: Optional[str] = None
 
@@ -53,6 +54,7 @@ class VideoGenerator:
             return
 
         self._is_generating = True
+        self._generation_complete = False  # 重标志为未完成
         self.video_path = self._get_video_path(session_id)
 
         # 创建输出视频文件
@@ -100,8 +102,6 @@ class VideoGenerator:
 
         if wait and self._generator_thread:
             self._generator_thread.join(timeout=5.0)
-
-        print("✓ 视频生成停止")
 
     def get_video_path(self) -> Optional[str]:
         """获取视频文件路径
@@ -299,5 +299,6 @@ class VideoGenerator:
         except:
             pass
         self.current_video_writer = None
+        self._generation_complete = True  # 标记为完成
 
         print(f"✓ Video generated: {frame_count} frames at {self.video_path}")

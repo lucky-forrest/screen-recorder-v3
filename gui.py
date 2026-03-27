@@ -31,6 +31,7 @@ class OperationRecorderGUI:
         self.root.title("Advanced Computer Operation Recorder")
         self.root.geometry(f"{GUIConfig.WINDOW_WIDTH}x{GUIConfig.WINDOW_HEIGHT}")
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.root.resizable(False, False)  # 禁止调整窗口大小，同时禁用最大化按钮
 
         # 加载配置
         self.config = config_loader.load_config()
@@ -41,6 +42,7 @@ class OperationRecorderGUI:
         self.event_count = 0
         self.recording_start_time: Optional[datetime] = None
         self.is_exporting = False  # 新增：标记是否正在导出
+        self._stop_requested = False  # 新增：标记是否已请求停止
 
         # 保存动画相关
         self.save_indicator_id = None
@@ -170,6 +172,7 @@ class OperationRecorderGUI:
         """开始录制"""
         try:
             print(f"[GUI] Starting recording...")
+            self._stop_requested = False  # 重置停止请求标记
 
             # 注册录制事件回调
             self.recorder.on_event(self._on_recorder_event)
@@ -202,13 +205,24 @@ class OperationRecorderGUI:
             messagebox.showerror("错误", f"无法启动录制: {e}")
 
     def _pause_recording(self):
-        """暂停录制"""
-        # 实现暂停功能
-        self._log("录制暂停: 暂未实现暂停回调，请直接停止录制")
+        """暂停/恢复录制"""
+        if not self.is_recording:
+            return
+
+        if self.recorder.is_paused:
+            # 当前是暂停状态，恢复录制
+            self.recorder.resume_recording()
+            self.pause_button.config(text="暂停录制 (Pause)")
+            self._log("▶️ 录制已恢复")
+        else:
+            # 当前是录制状态，暂停录制
+            self.recorder.pause_recording()
+            self.pause_button.config(text="恢复录制 (Resume)", state=tk.NORMAL)
+            self._log("⏸️ 录制已暂停，点击恢复继续")
 
     def _stop_recording(self):
         """停止录制"""
-        if not self.is_recording:
+        if not self.is_recording or self._stop_requested:
             return
 
         # 创建确认窗口
@@ -241,29 +255,46 @@ class OperationRecorderGUI:
         self.export_button.config(state=tk.DISABLED)
 
         def on_confirm():
+            """确认停止录制的回调 - 立即执行"""
+            # 先关闭确认窗口
             confirm_window.destroy()
+            
+            # 标记已请求停止，防止重复进入
+            self._stop_requested = True
+            
+            # 1. 立即禁用停止按钮
             self.stop_button.config(state=tk.DISABLED)
             
-            # 关键修复：立即同步停止视频生成器（保证视频截止时间准确）
-            try:
-                self.video_generator.stop_generating()
-                self._log("⏹️ 已立即停止视频录制")
-            except Exception as e:
-                self._log(f"❌ 停止视频生成器失败: {e}")
-            
-            # 立即标记录制状态为停止（防止后续事件被录制）
+            # 2. 立即标记录制状态为停止（阻止新事件录制）
             self.is_recording = False
+
+            # 2.5. 重置暂停状态
+            self.recorder.is_paused = False
+            self.recorder._pause_event.clear()
+
+            # 3. 强制刷新UI，确保状态更新立即生效
             self._update_status()
+            self.root.update_idletasks()  # 强制处理待处理的UI事件
             
-            # 立即启动保存动画
-            self._start_saving_animation()
+            # 4. 立即启动保存动画（使用强制刷新，确保动画立即显示）
+            self._start_saving_animation_immediate()
             
-            # 异步执行剩余的停止逻辑（录制引擎停止、导出等）
+            # 5. 异步停止视频生成器（避免阻塞UI线程，但确保视频立即停止录制）
+            def stop_video_async():
+                try:
+                    # 立即停止视频录制（同步操作，但放在线程中避免阻塞）
+                    self.video_generator.stop_generating()
+                    self._log("⏹️ 视频录制已立即停止")
+                except Exception as e:
+                    self._log(f"❌ 停止视频生成器失败: {e}")
+            
+            # 使用线程立即停止视频，不阻塞UI
+            video_stop_thread = threading.Thread(target=stop_video_async, daemon=True)
+            video_stop_thread.start()
+            
+            # 6. 异步执行剩余的停止逻辑（录制引擎停止、导出等）
             stop_thread = threading.Thread(target=self._stop_recording_impl, daemon=True)
             stop_thread.start()
-
-            # 给录制引擎一点时间来处理停止信号（确保不会有残留事件被录制）
-            time.sleep(0.1)
 
         def on_cancel():
             confirm_window.destroy()
@@ -275,6 +306,10 @@ class OperationRecorderGUI:
     def _stop_recording_impl(self):
         """执行停止录制的实际逻辑（异步）"""
         try:
+            # 更新导出步骤
+            self.current_export_step = "准备导出数据..."
+            self.export_progress = 5
+            
             # 停止录制引擎（此时视频已提前停止）
             self.root.after(0, lambda: self._log("⏹️ 停止录制引擎..."))
             events = self.recorder.stop_recording()
@@ -289,7 +324,11 @@ class OperationRecorderGUI:
             elapsed = (datetime.now() - self.recording_start_time).total_seconds() if self.recording_start_time else 0
             self.root.after(0, lambda: self._log(f"⏱️ 录制时长: {format_duration(int(elapsed))}"))
             
-            # 启动导出
+            # 更新进度
+            self.export_progress = 10
+            self.current_export_step = "准备导出数据..."
+            
+            # 启动导出（show_animation=False因为动画已经启动）
             self.root.after(0, lambda: self._export_data(show_animation=False))
 
         except Exception as e:
@@ -297,6 +336,7 @@ class OperationRecorderGUI:
             self.root.after(0, lambda: messagebox.showerror("错误", f"无法停止录制: {e}"))
             self.root.after(0, lambda: self.export_button.config(state=tk.NORMAL))
             self.root.after(0, self._stop_saving_animation)
+            self._stop_requested = False  # 重置标记
 
     def _export_data(self, show_animation=True):
         """导出数据（异步执行）
@@ -317,8 +357,8 @@ class OperationRecorderGUI:
         self.export_progress = 0  # 重置进度
         self.current_export_step = "准备导出..."
 
-        # 启动保存动画（如果需要）
-        if show_animation:
+        # 启动保存动画（如果需要）- 但注意如果动画已启动则跳过
+        if show_animation and not self._save_animation_running:
             self.root.after(0, self._start_saving_animation)
 
         # 异步执行导出逻辑
@@ -393,8 +433,27 @@ class OperationRecorderGUI:
                     self.root.after(0, lambda: self._log("⚠ 视频时长过短或未检测到录制事件"))
                     self.root.after(0, lambda: self._log("💡 建议：录制时至少进行1-2次鼠标点击或键盘操作"))
 
-                # 步骤5：最终校验（进度90%-100%）
+                # 步骤5：等待视频生成器和文件写入完成（同步等待）
                 self.export_progress = 90
+                self.current_export_step = "等待视频生成完成..."
+                self.root.after(0, lambda: self._log("⏳ 等待视频生成完成..."))
+
+                # 轮询检测视频是否真正完成（最多等待10秒）
+                max_wait = 10
+                wait_count = 0
+                while wait_count < max_wait:
+                    if self._is_video_file_ready():
+                        break
+                    time.sleep(0.5)
+                    wait_count += 0.5
+                    self.export_progress = min(95, 90 + (wait_count * 5))
+
+                if not self._is_video_file_ready():
+                    self.root.after(0, lambda: self._log("⚠ 警告：视频可能未完全写入"))
+                    self.root.after(0, lambda: self._log("💡 提示：请稍后再打开文件夹"))
+
+                # 步骤6：最终校验（进度95%-100%）
+                self.export_progress = 95
                 self.current_export_step = "校验文件完整性..."
                 self.root.after(0, lambda: self._log("✅ 校验文件完整性..."))
                 time.sleep(0.5)
@@ -415,32 +474,44 @@ class OperationRecorderGUI:
         export_thread = threading.Thread(target=export_worker, daemon=True)
         export_thread.start()
 
-    def _check_all_files_ready(self):
-        """检查所有导出文件是否已就绪"""
-        # 检查CSV
-        csv_ready = False
-        if self.export_file_paths["csv"] and os.path.exists(self.export_file_paths["csv"]):
-            csv_ready = os.path.getsize(self.export_file_paths["csv"]) > 0
+    def _is_video_file_ready(self):
+        """检查视频文件是否已完全写入
 
-        # 检查JSON
-        json_ready = False
-        if self.export_file_paths["json"] and os.path.exists(self.export_file_paths["json"]):
-            json_ready = os.path.getsize(self.export_file_paths["json"]) > 0
+        Returns:
+            bool: 视频是否已完全写入可播放
+        """
+        video_path = self.export_file_paths.get("video")
+        if not video_path:
+            return False
 
-        # 检查视频（允许空但需存在）
-        video_ready = False
-        if self.export_file_paths["video"]:
-            video_ready = os.path.exists(self.export_file_paths["video"])
+        # 检查文件存在且大于10KB
+        if not os.path.exists(video_path) or os.path.getsize(video_path) < 10240:
+            return False
 
-        return csv_ready and json_ready and video_ready
+        # 检查视频生成器是否已标记为完成
+        if hasattr(self.video_generator, '_generation_complete'):
+            if not self.video_generator._generation_complete:
+                return False
+
+        return True
 
     def _finalize_export(self):
         """完成导出流程（UI线程执行）"""
         # 等待所有文件就绪（最终确认）
+        # 关键：确保视频文件已完全写入生成器完成态标记
+        self._log("⏳ 确认所有文件就绪...")
         wait_count = 0
-        while not self._check_all_files_ready() and wait_count < 10:
+        max_wait = 15  # 最大等待15秒
+        while not self._is_video_file_ready() and wait_count < max_wait:
             time.sleep(0.5)
             wait_count += 1
+            progress = min(100, 95 + int((wait_count / max_wait) * 5))
+            self.export_progress = progress
+
+        # 再次确认：关键要求 - 视频文件必须能正常播放
+        if not self._is_video_file_ready():
+            self._log("⚠ 警告：视频文件未完全就绪")
+            self._log("💡 提示：这是有限制，可能无法播放，但仍会保存数据")
 
         # 确保进度到100%
         self.export_progress = 100
@@ -507,6 +578,7 @@ class OperationRecorderGUI:
 
         # 重置导出状态
         self._reset_export_state()
+        self._stop_requested = False  # 重置停止请求标记
 
     def _reset_export_state(self):
         """重置导出状态"""
@@ -519,7 +591,10 @@ class OperationRecorderGUI:
     def _update_status(self):
         """更新状态显示"""
         if self.is_recording:
-            self.status_label.config(text="状态: 录制中 (Recording)", foreground="green")
+            if self.recorder.is_paused:
+                self.status_label.config(text="状态: 已暂停 (Paused)", foreground="#FF9800")
+            else:
+                self.status_label.config(text="状态: 录制中 (Recording)", foreground="green")
         elif self.is_exporting:
             self.status_label.config(text=f"状态: 导出中 (Exporting) - {self.current_export_step}", foreground="#FF9800")
         else:
@@ -545,7 +620,7 @@ class OperationRecorderGUI:
 
     def _update_gui_loop(self):
         """更新GUI循环"""
-        if self.is_recording:
+        if self.is_recording and not self._stop_requested:
             # 更新事件计数
             try:
                 events = self.recorder.get_session_events()
@@ -568,12 +643,102 @@ class OperationRecorderGUI:
         
         self.root.after(GUIConfig.STATUS_TEXT_UPDATE_INTERVAL, self._update_gui_loop)
 
-    def _start_saving_animation(self):
-        """开始显示保存动画"""
+    def _start_saving_animation_immediate(self):
+        """立即启动保存动画（无延迟）"""
         self._save_animation_running = True
         self.save_step = 0
-        self.export_progress = 0
-        self.current_export_step = "准备导出..."
+        if self.export_progress == 0:
+            self.export_progress = 0
+            self.current_export_step = "正在停止录制..."
+        
+        # 立即绘制第一帧动画（不经过after调度）
+        self._draw_animation_frame()
+        
+        # 然后启动定时更新
+        self.save_indicator_id = self.root.after(300, self._update_save_animation)
+
+    def _draw_animation_frame(self):
+        """立即绘制动画帧"""
+        # 清空保存指示器区域
+        self.preview_canvas.delete("save_indicator")
+        self.preview_canvas.delete("preview")
+        
+        # 绘制背景
+        self.preview_canvas.create_rectangle(
+            0, 0, 980, 200,
+            fill="#2d2d2d",
+            outline="",
+            tags="save_indicator"
+        )
+        
+        # 定义步骤颜色
+        step_colors = {
+            "正在停止录制...": "#FF5722",
+            "准备导出...": "#2196F3",
+            "准备导出数据...": "#2196F3",
+            "正在保存CSV文件...": "#4CAF50",
+            "正在保存JSON文件...": "#FF9800",
+            "正在生成视频文件...": "#9C27B0",
+            "校验文件完整性...": "#607D8B",
+            "导出完成！": "#4CAF50"
+        }
+        current_color = step_colors.get(self.current_export_step, "#FF5722")
+        
+        # 绘制当前步骤文字
+        self.preview_canvas.create_text(
+            490, 80,
+            text=self.current_export_step,
+            fill=current_color,
+            font=("Arial", 16, "bold"),
+            tags="save_indicator"
+        )
+        
+        # 添加加载进度条效果
+        bar_length = 600
+        bar_x = (980 - bar_length) // 2
+        progress_width = int(bar_length * (self.export_progress / 100)) if self.export_progress > 0 else 0
+        
+        # 背景条
+        self.preview_canvas.create_rectangle(
+            bar_x, 120, bar_x + bar_length, 140,
+            fill="#444444", outline="#666666", tags="save_indicator"
+        )
+        
+        # 进度条（如果有进度）
+        if progress_width > 0:
+            self.preview_canvas.create_rectangle(
+                bar_x, 120, bar_x + progress_width, 140,
+                fill=current_color, outline="", tags="save_indicator"
+            )
+        
+        # 进度文本
+        self.preview_canvas.create_text(
+            490, 155,
+            text=f"进度: {self.export_progress:.0f}%" if self.export_progress > 0 else "准备中...",
+            fill="white",
+            font=("Arial", 12, "bold"),
+            tags="save_indicator"
+        )
+        
+        # 添加一个旋转的加载指示器
+        spinner_chars = ["◐", "◓", "◑", "◒"]
+        spinner = spinner_chars[self.save_step % 4]
+        self.preview_canvas.create_text(
+            490, 30,
+            text=spinner,
+            fill=current_color,
+            font=("Arial", 20, "bold"),
+            tags="save_indicator"
+        )
+        self.save_step += 1
+
+    def _start_saving_animation(self):
+        """开始显示保存动画（延迟版本，用于其他场景）"""
+        self._save_animation_running = True
+        self.save_step = 0
+        if self.export_progress == 0:
+            self.export_progress = 0
+            self.current_export_step = "准备导出..."
         self._update_save_animation()
 
     def _stop_saving_animation(self):
@@ -606,7 +771,9 @@ class OperationRecorderGUI:
 
         # 定义步骤颜色映射
         step_colors = {
+            "正在停止录制...": "#FF5722",
             "准备导出...": "#2196F3",
+            "准备导出数据...": "#2196F3",
             "正在保存CSV文件...": "#4CAF50",
             "正在保存JSON文件...": "#FF9800",
             "正在生成视频文件...": "#9C27B0",
@@ -647,6 +814,18 @@ class OperationRecorderGUI:
             font=("Arial", 12, "bold"),
             tags="save_indicator"
         )
+        
+        # 添加旋转加载指示器
+        spinner_chars = ["◐", "◓", "◑", "◒"]
+        spinner = spinner_chars[self.save_step % 4]
+        self.preview_canvas.create_text(
+            490, 30,
+            text=spinner,
+            fill=current_color,
+            font=("Arial", 20, "bold"),
+            tags="save_indicator"
+        )
+        self.save_step += 1
 
         # 继续更新动画（300ms刷新一次，更流畅）
         self.save_indicator_id = self.root.after(300, self._update_save_animation)

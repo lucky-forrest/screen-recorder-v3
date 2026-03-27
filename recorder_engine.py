@@ -50,6 +50,8 @@ class RecorderEngine:
         self.is_recording = False
         self.session_id = None
         self.current_session = None
+        self.is_paused = False  # 新增：暂停状态
+        self._pause_event = threading.Event()  # 新增：暂停标志位
 
         # 事件队列
         self.event_queue: Queue = Queue(maxsize=self.config["recording"]["event_queue_size"])
@@ -87,6 +89,10 @@ class RecorderEngine:
         """
         if self.is_recording:
             raise RuntimeError("Already recording")
+
+        # 重置暂停状态
+        self.is_paused = False
+        self._pause_event.clear()
 
         # 生成session_id
         self.session_id = timestamp_manager.generate_session_id()
@@ -309,6 +315,10 @@ class RecorderEngine:
         if not self.is_recording:
             return
 
+        # 新增：如果暂停，直接丢弃事件
+        if self.is_paused:
+            return
+
         event_type = event_data.get("event_type")
         x = event_data.get("x", 0)
         y = event_data.get("y", 0)
@@ -340,7 +350,7 @@ class RecorderEngine:
 
 
             else:
-                print(f"[EventProcessor] Unknown event type: {event_type}")
+                pass  # 忽略未知事件类型
 
         except Exception as e:
             print(f"Error processing event: {e}")
@@ -354,7 +364,7 @@ class RecorderEngine:
             x: X坐标
             y: Y坐标
         """
-        if not self.ui_analyzer or not self.is_recording:
+        if not self.ui_analyzer or not self.is_recording or self.is_paused:
             return
 
         # 获取UI元素信息
@@ -432,4 +442,22 @@ class RecorderEngine:
         )
 
         return op_event
+
+    def pause_recording(self):
+        """暂停录制"""
+        if not self.is_recording:
+            raise RuntimeError("Not recording")
+
+        self.is_paused = True
+        print("✓ 录制已暂停")
+
+    def resume_recording(self):
+        """恢复录制"""
+        if not self.is_recording:
+            raise RuntimeError("Not recording")
+        if not self.is_paused:
+            raise RuntimeError("Not paused")
+
+        self.is_paused = False
+        print("✓ 录制已恢复")
 
