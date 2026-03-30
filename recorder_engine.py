@@ -163,7 +163,44 @@ class RecorderEngine:
 
         # 返回所有事件
         return list(self.session_events)
-
+    
+    def _process_mouse_move_events(self, events: List[OperationEvent]) -> List[OperationEvent]:
+        """预处理鼠标移动事件，合并连续的移动事件为开始/结束两条
+        
+        Args:
+            events: 原始事件列表
+            
+        Returns:
+            处理后的事件列表
+        """
+        processed_events = []
+        # 移动事件缓存：[start_event, last_event]
+        move_cache = None
+        
+        for event in events:
+            # 判断是否为鼠标移动事件
+            if event.event_type == EventType.MOUSE_MOVE:
+                if move_cache is None:
+                    # 首次触发移动事件，初始化缓存（开始事件）
+                    move_cache = [event, event]
+                else:
+                    # 更新缓存中的最后一条移动事件
+                    move_cache[1] = event
+            else:
+                # 非移动事件：先处理缓存的移动事件，再添加当前事件
+                if move_cache is not None:
+                    processed_events.append(move_cache[0])  # 移动开始
+                    processed_events.append(move_cache[1])  # 移动结束
+                    move_cache = None
+                # 添加非移动事件
+                processed_events.append(event)
+        
+        # 处理遍历结束后剩余的移动事件缓存
+        if move_cache is not None:
+            processed_events.append(move_cache[0])
+            processed_events.append(move_cache[1])
+        
+        return processed_events
 
     def save_to_csv_with_message_name(self, message_name: str) -> Optional[str]:
         """保存为CSV格式（使用消息名称作为文件夹）
@@ -188,12 +225,15 @@ class RecorderEngine:
             print(f"✗ 创建消息目录失败: {e}")
             return None
 
+        # 预处理事件：合并连续的鼠标移动事件
+        processed_events = self._process_mouse_move_events(list(self.session_events))
+
         # 写入CSV
         try:
             with open(filepath, "w", encoding="utf-8") as f:
                 f.write("timestamp,event_type,detail,x,y,window_title,element_type,element_content,window_handle,window_class_name,window_process_id,control_handle,control_class_name,control_text\n")
 
-                for event in self.session_events:
+                for event in processed_events:
                     try:
                         export_data = event.get_export_dict()
                         # 处理None值
@@ -244,6 +284,9 @@ class RecorderEngine:
             print(f"✗ 创建消息目录失败: {e}")
             return None
 
+        # 预处理事件：合并连续的鼠标移动事件
+        processed_events = self._process_mouse_move_events(list(self.session_events))
+
         # 构建JSON数据
         try:
             # 获取开始时间
@@ -260,8 +303,8 @@ class RecorderEngine:
             json_data = {
                 "session_id": self.session_id,
                 "start_time": start_time,
-                "event_count": len(self.session_events),
-                "events": [event.get_full_json() for event in self.session_events]
+                "event_count": len(processed_events),  # 更新为处理后的事件数
+                "events": [event.get_full_json() for event in processed_events]
             }
 
             # 写入JSON
@@ -478,6 +521,7 @@ class RecorderEngine:
         )
 
         return op_event
+    
     def pause_recording(self):
         """暂停录制"""
         if not self.is_recording:
@@ -532,4 +576,3 @@ class RecorderEngine:
         except Exception as e:
             print(f"获取窗口信息失败: {e}")
             return None
-

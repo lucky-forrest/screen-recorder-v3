@@ -24,27 +24,39 @@
 
 #### 项目结构
 ```
-project/
-├── core/              # 核心业务逻辑
+screen-recorder-v3/
+├── gui.py                      # 主GUI程序（操作记录器界面）
+├── recorder_engine.py          # 录制引擎核心
+├── window_info_monitor.py      # 窗口信息监控器
+├── event_handler.py            # 事件监听器
+├── video_generator.py          # 视频生成器
+├── element_detector/           # UI元素检测模块
+│   ├── base_detector.py        # 检测器基类
+│   ├── textbox_detector.py     # 文本框检测器
+│   ├── button_detector.py      # 按钮检测器
+│   └── dropdown_detector.py    # 下拉框检测器
+├── data/
+│   └── event.py                # 数据模型定义
+├── utils/                      # 工具模块
 │   ├── __init__.py
-│   ├── keyboard_monitor.py
-│   └── mouse_monitor.py
-├── gui/               # 图形界面
-│   ├── __init__.py
-│   ├── main_window.py
-│   └── styles/
-├── utils/             # 工具函数
-│   ├── __init__.py
-│   └── text_utils.py
-├── tests/             # 测试文件
-│   ├── __init__.py
-│   ├── test_keyboard_monitor.py
-│   └── unit/
-├── resources/         # 资源文件
-├── README.md
-├── requirements.txt
-├── .gitignore
-└── CLAUDE.md
+│   ├── config_loader.py        # 配置加载器
+│   ├── file_manager.py         # 文件管理器
+│   ├── path_manager.py         # 路径管理器
+│   └── timestamp_manager.py    # 时间戳管理器
+├── config/                     # 配置模块
+│   └── constants.py            # GUI配置常量
+├── updater/                    # 更新模块
+├── output/                     # 输出目录（自动生成）
+│   ├── csv/                    # CSV格式数据
+│   ├── json/                   # JSON格式数据
+│   └── mp4/                    # MP4视频文件
+├── start_debug.bat             # Windows启动脚本
+├── requirements.txt            # Python依赖声明
+├── config.json                 # 应用配置文件
+├── README.md                   # 项目主文档
+├── WINDOW_INFO_FEATURE.md      # 窗口信息功能文档
+├── CLAUDE.md                   # 开发规范文档
+└── .gitignore
 ```
 
 #### 每个文件
@@ -407,3 +419,122 @@ Fixes #123
 - PATCH: 向下兼容的bug修复
 
 示例: 2.1.3 → 3.0.0 → 3.1.0 → 3.1.1
+
+## 项目实际功能说明
+
+### 核心功能模块
+
+#### 1. 录制引擎 (recorder_engine.py)
+负责收集和记录所有事件数据，包括：
+- 键盘事件监听
+- 鼠标事件监听
+- UI元素识别和检测
+- 窗口信息记录
+- 暂停/恢复/停止控制
+- 数据导出（CSV/JSON格式）
+
+#### 2. 窗口信息监控 (window_info_monitor.py)
+自动记录鼠标操作时的窗口和控件信息：
+- 窗口句柄和标题
+- 窗口类名和进程ID
+- 进程名称
+- 控件句柄和类名
+- 控件文本内容
+
+这些信息被**追加到**原有的event_handler模块中，用于增强录制数据的上下文信息。
+
+#### 3. UI元素检测 (element_detector/)
+智能识别屏幕上的UI元素：
+- 文本框 (TextboxDetector)
+- 按钮 (ButtonDetector)
+- 下拉框 (DropdownDetector)
+
+使用pyautogui和OCR技术进行元素识别。
+
+#### 4. 视频生成 (video_generator.py)
+将操作过程录制为可回放的视频：
+- 高帧率录制（默认30 FPS）
+- 可配置质量（默认85）
+- 支持输出MP4格式
+
+#### 5. GUI界面 (gui.py)
+基于Tkinter的现代化界面：
+- 开始/暂停/停止控制
+- 实时状态显示（事件数、录制时长）
+- 操作日志输出
+- 保存动画效果
+- 停止确认弹窗
+
+### 数据模型 (data/event.py)
+
+定义了完整的事件数据结构：
+
+**核心事件类：**
+- `KeyboardEvent`: 键盘事件
+- `MouseEvent`: 鼠标事件
+- `UIElementInfo`: UI元素信息
+- `WindowSpecificInfo`: 窗口和控件详细信息（新增）
+- `OperationEvent`: 综合操作事件
+
+**扩展事件类：**
+- `SessionStartEvent`: 录制会话开始
+- `SessionEndEvent`: 录制会话结束
+
+### 配置系统 (config/)
+
+在config.json中控制录制行为：
+
+```json
+{
+    "output": {
+        "csv": "./output",
+        "json": "./output",
+        "mp4": "./output"
+    },
+    "recording": {
+        "enabled": true,
+        "event_queue_size": 10000
+    },
+    "video": {
+        "enabled": true,
+        "framerate": 30,
+        "output_quality": 85
+    },
+    "ui_detection": {
+        "enabled": true,
+        "confidence_threshold": 0.7,
+        "element_detection_frequency": 0.1
+    }
+}
+```
+
+### 导出格式
+
+#### CSV格式
+```csv
+timestamp,event_type,detail,x,y,window_title,element_type,element_content,window_handle,window_class_name,window_process_id,window_process_name,control_handle,control_class_name,control_text
+2026-03-30T14:23:01,key_press,a,100,200,Code Editor,textbox,user input,264176,Notepad,21388,notepad.exe,12345,EDIT,输入文本
+```
+
+#### JSON格式
+```json
+{
+    "time": "2026-03-30T14:23:01Z",
+    "type": "key_press",
+    "detail": "a",
+    "x": 100,
+    "y": 200,
+    "window_title": "Code Editor",
+    "element_type": "textbox",
+    "element_content": "用户输入",
+    "window_handle": 264176,
+    "window_class_name": "Notepad",
+    "window_process_id": 21388,
+    "window_process_name": "notepad.exe",
+    "control_handle": 12345,
+    "control_class_name": "EDIT",
+    "control_text": "输入文本",
+    "operation_category": "",
+    "show_behavior_marker": true
+}
+```
