@@ -43,6 +43,7 @@ class OperationRecorderGUI:
         self.recording_start_time: Optional[datetime] = None
         self.is_exporting = False  # 新增：标记是否正在导出
         self._stop_requested = False  # 新增：标记是否已请求停止
+        self.message_name: Optional[str] = None  # 新增：录制消息名称
 
         # 保存动画相关
         self.save_indicator_id = None
@@ -221,87 +222,135 @@ class OperationRecorderGUI:
             self._log("⏸️ 录制已暂停，点击恢复继续")
 
     def _stop_recording(self):
-        """停止录制"""
+        """停止录制（优化版：完整显示按钮、比例协调）"""
         if not self.is_recording or self._stop_requested:
             return
 
-        # 创建确认窗口
+        # 1. 窗口基础设置：尺寸足够大，保证所有元素完整显示
         confirm_window = tk.Toplevel(self.root)
-        confirm_window.title("确认停止录制")
-        confirm_window.geometry("400x150")
+        confirm_window.title("停止录制确认")
+        confirm_window.geometry("520x300")  # 增加高度，确保按钮完整显示
         confirm_window.resizable(False, False)
         confirm_window.transient(self.root)
         confirm_window.grab_set()
+        confirm_window.configure(bg="#f0f0f0")  # 适配系统默认主题，避免样式冲突
 
-        # 居中显示
-        x = self.root.winfo_x() + (self.root.winfo_width() - 400) // 2
-        y = self.root.winfo_y() + (self.root.winfo_height() - 150) // 2
+        # 2. 窗口居中
+        x = self.root.winfo_x() + (self.root.winfo_width() - 520) // 2
+        y = self.root.winfo_y() + (self.root.winfo_height() - 300) // 2
         confirm_window.geometry(f"+{x}+{y}")
 
-        # 内容
-        center_frame = ttk.Frame(confirm_window, padding="20")
-        center_frame.pack(fill=tk.BOTH, expand=True)
+        # 3. 主容器：统一内边距，避免元素贴边
+        main_frame = ttk.Frame(confirm_window, padding="20")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # 4. 标题区域：醒目、不拥挤
+        title_frame = ttk.Frame(main_frame)
+        title_frame.pack(fill=tk.X, pady=(0, 15))
 
         ttk.Label(
-            center_frame,
-            text="📦 确定要停止录制并保存文件吗？",
-            font=("Arial", 14),
-            foreground="#2196F3"
-        ).pack(pady=15)
+            title_frame,
+            text="⚠️",
+            font=("Arial", 20)
+        ).pack(side=tk.LEFT, padx=(0, 10))
 
-        action_frame = ttk.Frame(center_frame)
-        action_frame.pack(pady=5)
+        ttk.Label(
+            title_frame,
+            text="确定要停止录制并保存文件吗？",
+            font=("Microsoft YaHei", 16, "bold"),
+            foreground="#2c3e50"
+        ).pack(side=tk.LEFT)
 
-        self.export_button.config(state=tk.DISABLED)
+        # 5. 分割线：分隔标题和内容
+        ttk.Separator(main_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(0, 15))
+
+        # 6. 输入区域：比例协调，输入框高度适中
+        input_frame = ttk.LabelFrame(main_frame, text="录制信息", padding="15")
+        input_frame.pack(fill=tk.X, pady=(0, 20))
+
+        ttk.Label(
+            input_frame,
+            text="录制名称（可自定义）：",
+            font=("Microsoft YaHei", 11)
+        ).pack(anchor=tk.W, pady=(0, 8))
+
+        self.message_name_entry = ttk.Entry(
+            input_frame,
+            font=("Microsoft YaHei", 12),
+            width=40
+        )
+        default_message = f"录制会话_{self.session_id}"
+        self.message_name_entry.insert(0, default_message)
+        self.message_name_entry.pack(fill=tk.X, ipady=6)  # ipady 增加输入框高度，更美观
+        self.message_name_entry.focus()  # 自动聚焦输入框
+
+        # 7. 按钮区域：核心修复！保证按钮完整显示、比例协调
+        btn_frame = ttk.Frame(main_frame)
+        btn_frame.pack(fill=tk.X)
+
+        # 布局权重：左侧空白占满，按钮固定宽度，右对齐
+        btn_frame.columnconfigure(0, weight=1)
+        btn_frame.columnconfigure(1, weight=0)
+        btn_frame.columnconfigure(2, weight=0)
 
         def on_confirm():
-            """确认停止录制的回调 - 立即执行"""
-            # 先关闭确认窗口
+            """确认停止录制的回调"""
+            
+            message_name = self.message_name_entry.get().strip()
+            if not message_name:
+                message_name = f"录制会话_{self.session_id}"
             confirm_window.destroy()
-            
-            # 标记已请求停止，防止重复进入
-            self._stop_requested = True
-            
-            # 1. 立即禁用停止按钮
-            self.stop_button.config(state=tk.DISABLED)
-            
-            # 2. 立即标记录制状态为停止（阻止新事件录制）
-            self.is_recording = False
 
-            # 2.5. 重置暂停状态
+            # 保存 message_name 以供后续使用
+            self.message_name = message_name
+
+            # 重置状态、启动后续逻辑（完全保留原功能）
+            self._stop_requested = True
+            self.stop_button.config(state=tk.DISABLED)
+            self.is_recording = False
             self.recorder.is_paused = False
             self.recorder._pause_event.clear()
-
-            # 3. 强制刷新UI，确保状态更新立即生效
             self._update_status()
-            self.root.update_idletasks()  # 强制处理待处理的UI事件
-            
-            # 4. 立即启动保存动画（使用强制刷新，确保动画立即显示）
+            self.root.update_idletasks()
             self._start_saving_animation_immediate()
-            
-            # 5. 异步停止视频生成器（避免阻塞UI线程，但确保视频立即停止录制）
+
+            # 异步停止视频录制
             def stop_video_async():
                 try:
-                    # 立即停止视频录制（同步操作，但放在线程中避免阻塞）
                     self.video_generator.stop_generating()
                     self._log("⏹️ 视频录制已立即停止")
                 except Exception as e:
                     self._log(f"❌ 停止视频生成器失败: {e}")
-            
-            # 使用线程立即停止视频，不阻塞UI
+
             video_stop_thread = threading.Thread(target=stop_video_async, daemon=True)
             video_stop_thread.start()
-            
-            # 6. 异步执行剩余的停止逻辑（录制引擎停止、导出等）
+
+            # 异步执行停止逻辑
             stop_thread = threading.Thread(target=self._stop_recording_impl, daemon=True)
             stop_thread.start()
 
         def on_cancel():
+            """取消停止录制"""
             confirm_window.destroy()
             self.export_button.config(state=tk.NORMAL)
 
-        ttk.Button(action_frame, text="确定保存", command=on_confirm).pack(side=tk.LEFT, padx=10)
-        ttk.Button(action_frame, text="取消", command=on_cancel).pack(side=tk.LEFT, padx=10)
+        # 按钮样式：统一大小、点击区域充足、右对齐
+        ttk.Button(
+            btn_frame,
+            text="取消",
+            command=on_cancel,
+            width=10
+        ).grid(row=0, column=1, padx=(0, 10), pady=5)
+
+        ttk.Button(
+            btn_frame,
+            text="确认保存",
+            command=on_confirm,
+            width=12
+        ).grid(row=0, column=2, padx=(0, 5), pady=5)
+
+        # 禁用导出按钮（原逻辑保留）
+        self.export_button.config(state=tk.DISABLED)
 
     def _stop_recording_impl(self):
         """执行停止录制的实际逻辑（异步）"""
@@ -309,25 +358,25 @@ class OperationRecorderGUI:
             # 更新导出步骤
             self.current_export_step = "准备导出数据..."
             self.export_progress = 5
-            
+
             # 停止录制引擎（此时视频已提前停止）
             self.root.after(0, lambda: self._log("⏹️ 停止录制引擎..."))
-            events = self.recorder.stop_recording()
-            
+            events = self.recorder.stop_recording(self.message_name)
+
             # 更新按钮状态（UI线程）
             self.root.after(0, lambda: self.start_button.config(state=tk.NORMAL))
             self.root.after(0, lambda: self.pause_button.config(state=tk.DISABLED))
-            
+
             # 记录停止信息
             self.root.after(0, lambda: self._log(f"✅ 录制结束: 会话 {self.session_id}"))
             self.root.after(0, lambda: self._log(f"📊 事件统计: 共捕获 {len(events)} 个事件"))
             elapsed = (datetime.now() - self.recording_start_time).total_seconds() if self.recording_start_time else 0
             self.root.after(0, lambda: self._log(f"⏱️ 录制时长: {format_duration(int(elapsed))}"))
-            
+
             # 更新进度
             self.export_progress = 10
             self.current_export_step = "准备导出数据..."
-            
+
             # 启动导出（show_animation=False因为动画已经启动）
             self.root.after(0, lambda: self._export_data(show_animation=False))
 

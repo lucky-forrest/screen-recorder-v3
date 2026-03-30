@@ -89,3 +89,21 @@ class FileManager:
             return []
 
         return list(dir_path.glob(pattern))
+
+    @staticmethod
+    def sanitize_filename(filename: str) -> str:
+        """过滤文件名中的非法字符
+
+        移除 Windows 文件名中不允许的字符：
+        \\ / : * ? " < > |
+
+        Args:
+            filename: 原始文件名
+
+        Returns:
+            str: 过滤后的文件名
+        """
+        illegal_chars = '\\/:*?"<>|'
+        for char in illegal_chars:
+            filename = filename.replace(char, '_')
+        return filename

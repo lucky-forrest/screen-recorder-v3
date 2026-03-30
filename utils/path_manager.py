@@ -4,6 +4,7 @@
 """
 from pathlib import Path
 from typing import Optional
+from utils.file_manager import FileManager
 
 
 class PathManager:
@@ -135,3 +136,52 @@ class PathManager:
             path.mkdir(parents=True, exist_ok=True)
 
         return paths
+
+    def get_message_directory(self, message_name: str) -> Path:
+        """获取基于消息名称的输出目录
+
+        Args:
+            message_name: 录制消息名称（会过滤非法字符）
+
+        Returns:
+            Path: 消息名称对应的输出目录路径
+        """
+        output_base = self.get_output_directory()
+        sanitized_name = FileManager.sanitize_filename(message_name)
+        return output_base / sanitized_name
+
+    def get_message_csv_file_path(self, message_name: str) -> Path:
+        """获取基于消息名称的CSV文件完整路径
+
+        Args:
+            message_name: 录制消息名称
+
+        Returns:
+            Path: CSV文件路径
+        """
+        msg_dir = self.get_message_directory(message_name)
+        return msg_dir / f"{message_name}_operation_log.csv"
+
+    def get_message_json_file_path(self, message_name: str) -> Path:
+        """获取基于消息名称的JSON文件完整路径
+
+        Args:
+            message_name: 录制消息名称
+
+        Returns:
+            Path: JSON文件路径
+        """
+        msg_dir = self.get_message_directory(message_name)
+        return msg_dir / f"{message_name}_operation_log.json"
+
+    def get_message_video_file_path(self, message_name: str) -> Path:
+        """获取基于消息名称的视频文件完整路径
+
+        Args:
+            message_name: 录制消息名称
+
+        Returns:
+            Path: 视频文件路径
+        """
+        msg_dir = self.get_message_directory(message_name)
+        return msg_dir / f"{message_name}_operation_video.mp4"
