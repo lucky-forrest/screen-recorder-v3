@@ -1,6 +1,6 @@
 """操作录制引擎
 
-核心录制引擎，协调事件采集、UI分析和数据导出。
+核心录制引擎，协调事件采集、数据导出。
 """
 import json
 import threading
@@ -13,15 +13,7 @@ from typing import Optional, List, Callable
 from collections import deque
 from datetime import datetime
 
-from data.event import (
-    OperationEvent,
-    EventType,
-    SessionStartEvent,
-    SessionEndEvent,
-    KeyboardEvent,
-    MouseEvent,
-    UIElementInfo
-)
+from data.event import OperationEvent, EventType, SessionStartEvent, SessionEndEvent, WindowSpecificInfo, UIElementInfo
 from event_handler import EventHandler, EventHandlerConfig
 from element_detector.base_detector import BaseUIDetector
 from element_detector.textbox_detector import TextBoxDetector
@@ -71,9 +63,6 @@ class RecorderEngine:
             confidence_threshold=self.config["ui_detection"]["confidence_threshold"]
         )
 
-        # UI分析器（稍后创建）
-        self.ui_analyzer = None
-
         # 视频生成器（可选）
         self.video_generator = None
 
@@ -104,11 +93,7 @@ class RecorderEngine:
         # 初始化事件队列为空
         self.session_events.clear()
 
-        # 启动UI分析器
-        if self.ui_analyzer is None:
-            from ui_analyzer import UIAnalyzer
-            self.ui_analyzer = UIAnalyzer(self)
-
+    
         # 启动视频生成器（如果可用）
         if self.video_generator is not None:
             self.video_generator.start_generating(self.session_id)
@@ -206,7 +191,7 @@ class RecorderEngine:
         # 写入CSV
         try:
             with open(filepath, "w", encoding="utf-8") as f:
-                f.write("timestamp,event_type,detail,x,y,window_title,element_type,element_content\n")
+                f.write("timestamp,event_type,detail,x,y,window_title,element_type,element_content,window_handle,window_class_name,window_process_id,control_handle,control_class_name,control_text\n")
 
                 for event in self.session_events:
                     try:
@@ -403,7 +388,7 @@ class RecorderEngine:
             elif event_type == "mouse_click":
                 op_event = self._create_operation_event_from_mouse(event_data)
             elif event_type == "mouse_move":
-                # 鼠标移动时也添加事件用于截图
+                # 鼠标移动时也添加事件用于捕捉窗口信息
                 op_event = OperationEvent(
                     event_type=EventType.MOUSE_MOVE,
                     detail=f"Mouse at ({x}, {y})",
@@ -411,6 +396,11 @@ class RecorderEngine:
                 )
 
             if op_event:
+                # 为鼠标事件获取窗口信息
+                if event_type == "mouse_click" or event_type == "mouse_move":
+                    window_info = self._get_window_info_at_position(x, y)
+                    op_event.window_info = window_info
+
                 self.session_events.append(op_event)
                 # 发送到视频生成器
                 try:
@@ -423,36 +413,11 @@ class RecorderEngine:
             else:
                 pass  # 忽略未知事件类型
 
+
         except Exception as e:
             print(f"Error processing event: {e}")
             import traceback
             traceback.print_exc()
-
-    def _process_ui_interaction(self, x: int, y: int):
-        """处理UI元素交互
-
-        Args:
-            x: X坐标
-            y: Y坐标
-        """
-        if not self.ui_analyzer or not self.is_recording or self.is_paused:
-            return
-
-        # 获取UI元素信息
-        element_info = self.ui_analyzer.analyze_at_position(x, y)
-
-        # 等待当前操作的结束事件
-        op_event = self.session_events[-1] if self.session_events else None
-
-        if op_event and element_info:
-            # 更新最后的操作事件，添加元素信息
-            op_event.element_info = element_info
-            op_event.window_title = self.ui_analyzer.current_window_title or ""
-
-            try:
-                self._trigger_callbacks(op_event)
-            except (TypeError, AttributeError):
-                pass
 
     def _create_operation_event_from_keyboard(self, event_data: dict, element_info: UIElementInfo = None) -> Optional[OperationEvent]:
         """从键盘事件创建操作事件
@@ -513,7 +478,6 @@ class RecorderEngine:
         )
 
         return op_event
-
     def pause_recording(self):
         """暂停录制"""
         if not self.is_recording:
@@ -531,4 +495,41 @@ class RecorderEngine:
 
         self.is_paused = False
         print("✓ 录制已恢复")
+
+    def _get_window_info_at_position(self, x: int, y: int) -> Optional[WindowSpecificInfo]:
+        """获取指定位置的窗口信息
+
+        Args:
+            x: X坐标
+            y: Y坐标
+
+        Returns:
+            Optional[WindowSpecificInfo]: 窗口特定信息
+        """
+        try:
+            from window_info_monitor import get_monitor
+
+            monitor = get_monitor()
+            window_info = monitor.get_current_window_info()
+
+            # 获取控件信息
+            control_info = monitor.get_hovered_control_info()
+
+            # 创建窗口特定信息
+            window_specific_info = WindowSpecificInfo(
+                window_handle=window_info.handle,
+                window_title=window_info.title,
+                window_class_name=window_info.class_name,
+                window_process_id=window_info.process_id,
+                window_process_name=window_info.process_name,
+                control_handle=control_info.handle if control_info else 0,
+                control_class_name=control_info.class_name if control_info else "",
+                control_text=control_info.text if control_info else ""
+            )
+
+            return window_specific_info
+
+        except Exception as e:
+            print(f"获取窗口信息失败: {e}")
+            return None
 

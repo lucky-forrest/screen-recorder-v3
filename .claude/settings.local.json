@@ -18,7 +18,16 @@
       "Bash(cd:*)",
       "Bash(find . -type d -name \"__pycache__\" -exec rm -rf {} +)",
       "Bash(find . -name \"*.pyc\" -delete)",
-      "Bash(find . -name \"*.pyo\" -delete)"
+      "Bash(find . -name \"*.pyo\" -delete)",
+      "Bash(git push:*)",
+      "Bash(ping -n 2 github.com)",
+      "Bash(findstr /C:\"Ping statistics\" /C:\"Reply\")",
+      "Bash(ping:*)",
+      "Bash(pip install:*)",
+      "Bash(find . -type f -name *.py -exec grep -l \"print.*调试\\\\|print.*测试\\\\|# TODO\\\\|# FIXME\" {})",
+      "Bash(2)",
+      "Bash(find . -type f -name *.py -exec grep -l 'if __name__.*__main__' {})",
+      "Bash(grep -r \"# test\\\\|# 测试\\\\|print.*Test\\\\|print.*调试\" --include=*.py .)"
     ]
   }
 }

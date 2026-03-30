@@ -175,10 +175,6 @@ class OperationRecorderGUI:
             print(f"[GUI] Starting recording...")
             self._stop_requested = False  # 重置停止请求标记
 
-            # 注册录制事件回调
-            self.recorder.on_event(self._on_recorder_event)
-            print(f"[GUI] Event callback registered")
-
             self.session_id = self.recorder.start_recording()
             self.event_count = 0
             self.recording_start_time = datetime.now()
@@ -529,35 +525,60 @@ class OperationRecorderGUI:
         """完成导出流程（UI线程执行）"""
         # 等待所有文件就绪（最终确认）
         # 关键：确保视频文件已完全写入生成器完成态标记
-        self._log("⏳ 确认所有文件就绪...")
+        self._log("⏳ 等待视频文件完全保存...")
         wait_count = 0
-        max_wait = 15  # 最大等待15秒
-        while not self._is_video_file_ready() and wait_count < max_wait:
+
+        # 不限制最大等待时间，只要视频文件未就绪就一直等待
+        # 设置一个合理的超时保护（60秒），防止无限等待
+        total_wait_time = 0
+        timeout_seconds = 60  # 超时保护：最长等待60秒
+
+        while True:
+            if self._is_video_file_ready():
+                break
+
+            # 超时保护
+            if total_wait_time >= timeout_seconds:
+                self._log(f"⚠ 超时警告：等待视频文件超过{timeout_seconds}秒未就绪")
+                self._log("💡 提示：视频文件可能仍在生成中，请稍后检查")
+                break
+
+            # 定期更新进度（每5秒更新一次）
+            if wait_count > 0 and wait_count % 10 == 0:
+                progress = min(98, 95 + int((total_wait_time / timeout_seconds) * 3))
+                self.export_progress = progress
+                self._log(f"⏳ 继续等待视频文件... 已等待 {total_wait_time} 秒")
+
             time.sleep(0.5)
             wait_count += 1
-            progress = min(100, 95 + int((wait_count / max_wait) * 5))
+            total_wait_time += 0.5
+
+        # 再次确认视频文件状态
+        if self._is_video_file_ready():
+            self._log("✓ 视频文件已完全就绪")
+            progress = 99
             self.export_progress = progress
 
-        # 再次确认：关键要求 - 视频文件必须能正常播放
-        if not self._is_video_file_ready():
+            # 保存到消息目录
+            if self.message_name and self.export_file_paths.get("video"):
+                target_video = self.recorder.save_video_to_message_directory(
+                    self.message_name,
+                    source_video_path=self.export_file_paths["video"],
+                    overwrite=True
+                )
+                if target_video:
+                    self._log(f"✓ 子目录视频已保存: {target_video}")
+                    # 删除原视频
+                    try:
+                        os.remove(self.export_file_paths["video"])
+                        self.export_file_paths["video"] = target_video  # 更新路径
+                    except Exception as e:
+                        self._log(f"⚠ 无法删除原视频文件: {e}")
+                else:
+                    self._log("⚠ 子目录视频保存失败")
+        else:
             self._log("⚠ 警告：视频文件未完全就绪")
-            self._log("💡 提示：这是有限制，可能无法播放，但仍会保存数据")
-        elif self.message_name and self.export_file_paths.get("video"):
-            target_video = self.recorder.save_video_to_message_directory(
-                self.message_name,
-                source_video_path=self.export_file_paths["video"],
-                overwrite=True
-            )
-            if target_video:
-                self._log(f"✓ 子目录视频已保存: {target_video}")
-                # 删除原视频
-                try:
-                    os.remove(self.export_file_paths["video"])
-                    self.export_file_paths["video"] = target_video  # 更新路径
-                except Exception as e:
-                    self._log(f"⚠ 无法删除原视频文件: {e}")
-            else:
-                self._log("⚠ 子目录视频保存失败")
+            self._log("💡 提示：数据文件已保存，但视频文件可能需要时间写入完成")
 
         # 确保进度到100%
         self.export_progress = 100
@@ -935,11 +956,6 @@ class OperationRecorderGUI:
                     font=("Arial", 10),
                     tags="preview"
                 )
-
-    def _on_recorder_event(self, event):
-        """录制事件回调"""
-        # 可在这里处理实时事件更新
-        pass
 
     def _on_close(self):
         """窗口关闭回调"""
