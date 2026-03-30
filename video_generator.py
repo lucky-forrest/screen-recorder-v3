@@ -103,6 +103,16 @@ class VideoGenerator:
         if wait and self._generator_thread:
             self._generator_thread.join(timeout=5.0)
 
+    def wait_until_complete(self, timeout: float = 15.0) -> bool:
+        """Wait until the active video file has been finalized."""
+        if self._generation_complete:
+            return True
+
+        if self._generator_thread and self._generator_thread.is_alive():
+            self._generator_thread.join(timeout=timeout)
+
+        return self._generation_complete
+
     def get_video_path(self) -> Optional[str]:
         """获取视频文件路径
 

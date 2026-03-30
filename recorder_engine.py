@@ -174,57 +174,11 @@ class RecorderEngine:
             # 视频文件需要手动重命名
             self._rename_video_file(message_name)
         else:
-            # 自动保存文件
-            self.save_to_csv()
-            self.save_to_json()
+            print("未提供消息名称，跳过文件导出")
 
         # 返回所有事件
         return list(self.session_events)
 
-    def save_to_csv(self, filepath: Optional[str] = None):
-        """保存为CSV格式
-
-        Args:
-            filepath: CSV文件路径，默认基于session_id和配置
-        """
-        if not self.session_events:
-            print("No events to save")
-            return
-
-        if filepath is None:
-            filepath = self.path_manager.get_csv_file_path(self.session_id)
-
-        # 写入CSV
-        try:
-            with open(filepath, "w", encoding="utf-8") as f:
-                f.write("timestamp,event_type,detail,x,y,window_title,element_type,element_content\n")
-
-                for event in self.session_events:
-                    try:
-                        export_data = event.get_export_dict()
-                        # 处理None值
-                        window_title = export_data.get('window_title') or ''
-                        element_type = export_data.get('element_type') or ''
-                        element_content = export_data.get('element_content') or ''
-
-                        line = (
-                            f"{export_data['time']},"
-                            f"{export_data['type']},"
-                            f"{export_data['detail']},"
-                            f"{export_data['x']},{export_data['y']},"
-                            f"{window_title},"
-                            f"{element_type},"
-                            f"{element_content}\n"
-                        )
-                        f.write(line)
-                    except (IOError, OSError) as e:
-                        print(f"Error writing event to CSV: {e}")
-
-            print(f"✓ CSV文件已保存: {filepath}")
-            return True
-        except (IOError, OSError, json.JSONDecodeError) as e:
-            print(f"✗ 保存CSV失败: {e}")
-            return False
 
     def save_to_csv_with_message_name(self, message_name: str) -> Optional[str]:
         """保存为CSV格式（使用消息名称作为文件夹）
@@ -281,48 +235,6 @@ class RecorderEngine:
             print(f"✗ 保存CSV失败: {e}")
             return None
 
-    def save_to_json(self, filepath: Optional[str] = None):
-        """保存为JSON格式
-
-        Args:
-            filepath: JSON文件路径，默认基于session_id和配置
-        """
-        if not self.session_events:
-            print("No events to save")
-            return
-
-        if filepath is None:
-            filepath = self.path_manager.get_json_file_path(self.session_id)
-
-        # 构建JSON数据
-        try:
-            # 获取开始时间
-            if isinstance(self.current_session, SessionStartEvent):
-                start_time = self.current_session.start_time.isoformat()
-            elif isinstance(self.current_session, SessionEndEvent):
-                # 如果是SessionEndEvent，尝试从session_events获取第一个事件的时间
-                start_time = self.session_events[0].timestamp.isoformat() if self.session_events else datetime.now().isoformat()
-                # 更新current_session为开始时间
-                self.current_session.start_time = datetime.fromisoformat(start_time)
-            else:
-                start_time = self.current_session.start_time.isoformat() if hasattr(self.current_session, 'start_time') else datetime.now().isoformat()
-
-            json_data = {
-                "session_id": self.session_id,
-                "start_time": start_time,
-                "event_count": len(self.session_events),
-                "events": [event.get_full_json() for event in self.session_events]
-            }
-
-            # 写入JSON
-            with open(filepath, "w", encoding="utf-8") as f:
-                json.dump(json_data, f, indent=2, ensure_ascii=False)
-
-            print(f"✓ JSON文件已保存: {filepath}")
-            return True
-        except (IOError, OSError, json.JSONDecodeError) as e:
-            print(f"✗ 保存JSON失败: {e}")
-            return False
 
     def save_to_json_with_message_name(self, message_name: str) -> Optional[str]:
         """保存为JSON格式（使用消息名称作为文件夹）
@@ -386,39 +298,42 @@ class RecorderEngine:
         with self._lock:
             return list(self.session_events)
 
-    def _rename_video_file(self, message_name: str):
-        """将视频文件重命名到基于消息名称的文件夹
-
-        Args:
-            message_name: 录制消息名称
-        """
+    def save_video_to_message_directory(
+        self,
+        message_name: str,
+        source_video_path: Optional[str] = None,
+        overwrite: bool = False
+    ) -> Optional[str]:
+        """Save the finalized session video into the message subdirectory."""
         try:
-            # 获取原始视频文件路径
-            original_video_path = self.path_manager.get_video_file_path(self.session_id)
-            if not os.path.exists(original_video_path):
-                print(f"⚠ 视频文件不存在: {original_video_path}")
-                return
+            if self.video_generator is not None:
+                self.video_generator.wait_until_complete(timeout=20.0)
 
-            # 过滤消息名称中的非法字符
             sanitized_name = FileManager.sanitize_filename(message_name)
+            original_video_path = Path(source_video_path) if source_video_path else self.path_manager.get_video_file_path(self.session_id)
+            if not original_video_path.exists():
+                print(f"⚠ 视频文件不存在: {original_video_path}")
+                return None
 
-            # 创建目标目录
-            message_dir = self.path_manager.get_message_directory(message_name)
+            message_dir = self.path_manager.get_message_directory(sanitized_name)
             message_dir.mkdir(parents=True, exist_ok=True)
-
-            # 目标文件路径
             target_video_path = message_dir / f"{sanitized_name}_operation_video.mp4"
 
-            # 使用 shutil.move 重命名文件
-            if os.path.exists(target_video_path):
-                print(f"⚠ 目标视频文件已存在，跳过重命名: {target_video_path}")
-                return
-            time.sleep(10)  # 确保文件系统完成写入
-            shutil.move(str(original_video_path), str(target_video_path))
-            print(f"✓ 视频文件已移动到: {target_video_path}")
+            if target_video_path.exists() and not overwrite:
+                print(f"⚠ 目标视频文件已存在，跳过复制: {target_video_path}")
+                return str(target_video_path)
+
+            shutil.copy2(str(original_video_path), str(target_video_path))
+            print(f"✓ 视频文件已复制到: {target_video_path}")
+            return str(target_video_path)
 
         except Exception as e:
-            print(f"✗ 重命名视频文件失败: {e}")
+            print(f"✗ 保存子目录视频文件失败: {e}")
+            return None
+
+    def _rename_video_file(self, message_name: str):
+        """兼容旧调用，保留原方法名。"""
+        self.save_video_to_message_directory(message_name)
 
     def on_event(self, callback: Callable[[OperationEvent], None]):
         """注册事件回调

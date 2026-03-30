@@ -15,7 +15,10 @@
       "Bash(grep -E \"\\\\.py$|\\\\.bat$\")",
       "Bash(npx:*)",
       "Bash(ls:*)",
-      "Bash(cd:*)"
+      "Bash(cd:*)",
+      "Bash(find . -type d -name \"__pycache__\" -exec rm -rf {} +)",
+      "Bash(find . -name \"*.pyc\" -delete)",
+      "Bash(find . -name \"*.pyo\" -delete)"
     ]
   }
 }

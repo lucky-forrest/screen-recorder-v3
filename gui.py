@@ -295,7 +295,7 @@ class OperationRecorderGUI:
 
         def on_confirm():
             """确认停止录制的回调"""
-            
+
             message_name = self.message_name_entry.get().strip()
             if not message_name:
                 message_name = f"录制会话_{self.session_id}"
@@ -313,17 +313,6 @@ class OperationRecorderGUI:
             self._update_status()
             self.root.update_idletasks()
             self._start_saving_animation_immediate()
-
-            # 异步停止视频录制
-            def stop_video_async():
-                try:
-                    self.video_generator.stop_generating()
-                    self._log("⏹️ 视频录制已立即停止")
-                except Exception as e:
-                    self._log(f"❌ 停止视频生成器失败: {e}")
-
-            video_stop_thread = threading.Thread(target=stop_video_async, daemon=True)
-            video_stop_thread.start()
 
             # 异步执行停止逻辑
             stop_thread = threading.Thread(target=self._stop_recording_impl, daemon=True)
@@ -359,7 +348,12 @@ class OperationRecorderGUI:
             self.current_export_step = "准备导出数据..."
             self.export_progress = 5
 
-            # 停止录制引擎（此时视频已提前停止）
+            # 先同步停止视频生成，确保 mp4 已经完成落盘
+            self.root.after(0, lambda: self._log("⏹️ 停止视频录制..."))
+            self.video_generator.stop_generating(wait=True)
+            self.root.after(0, lambda: self._log("✓ 视频录制已停止"))
+
+            # 停止录制引擎
             self.root.after(0, lambda: self._log("⏹️ 停止录制引擎..."))
             events = self.recorder.stop_recording(self.message_name)
 
@@ -431,30 +425,17 @@ class OperationRecorderGUI:
                 self.export_progress = 20
                 self.current_export_step = "正在保存CSV文件..."
                 self.root.after(0, lambda: self._log("📝 导出CSV文件..."))
-                csv_path = self.recorder.save_to_csv()
                 time.sleep(0.8)  # 模拟处理时间（可根据实际调整）
                 self.export_progress = 40
                 
-                if csv_path and os.path.exists(csv_path):
-                    self.export_file_paths["csv"] = csv_path
-                    self.root.after(0, lambda: self._log("✓ CSV文件已生成"))
-                else:
-                    self.root.after(0, lambda: self._log("✗ CSV文件生成失败"))
 
                 # 步骤3：导出JSON（进度40%-60%）
                 self.export_progress = 40
                 self.current_export_step = "正在保存JSON文件..."
                 self.root.after(0, lambda: self._log("📝 导出JSON文件..."))
-                json_path = self.recorder.save_to_json()
                 time.sleep(0.8)  # 模拟处理时间
                 self.export_progress = 60
                 
-                if json_path and os.path.exists(json_path):
-                    self.export_file_paths["json"] = json_path
-                    self.root.after(0, lambda: self._log("✓ JSON文件已生成"))
-                else:
-                    self.root.after(0, lambda: self._log("✗ JSON文件生成失败"))
-
                 # 步骤4：处理视频生成（进度60%-90%）
                 self.export_progress = 60
                 self.current_export_step = "正在生成视频文件..."
@@ -561,6 +542,22 @@ class OperationRecorderGUI:
         if not self._is_video_file_ready():
             self._log("⚠ 警告：视频文件未完全就绪")
             self._log("💡 提示：这是有限制，可能无法播放，但仍会保存数据")
+        elif self.message_name and self.export_file_paths.get("video"):
+            target_video = self.recorder.save_video_to_message_directory(
+                self.message_name,
+                source_video_path=self.export_file_paths["video"],
+                overwrite=True
+            )
+            if target_video:
+                self._log(f"✓ 子目录视频已保存: {target_video}")
+                # 删除原视频
+                try:
+                    os.remove(self.export_file_paths["video"])
+                    self.export_file_paths["video"] = target_video  # 更新路径
+                except Exception as e:
+                    self._log(f"⚠ 无法删除原视频文件: {e}")
+            else:
+                self._log("⚠ 子目录视频保存失败")
 
         # 确保进度到100%
         self.export_progress = 100
