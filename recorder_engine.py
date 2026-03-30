@@ -231,24 +231,26 @@ class RecorderEngine:
         # 写入CSV
         try:
             with open(filepath, "w", encoding="utf-8") as f:
-                f.write("timestamp,event_type,detail,x,y,window_title,element_type,element_content,window_handle,window_class_name,window_process_id,control_handle,control_class_name,control_text\n")
+                f.write("timestamp,event_type,detail,x,y,window_title,element_type,element_content,window_handle,window_class_name,window_process_id,window_process_name,window_visible,window_enabled,window_active,control_handle,control_class_name,control_text\n")
 
                 for event in processed_events:
                     try:
                         export_data = event.get_export_dict()
-                        # 处理None值
-                        window_title = export_data.get('window_title') or ''
-                        element_type = export_data.get('element_type') or ''
-                        element_content = export_data.get('element_content') or ''
-
                         line = (
                             f"{export_data['time']},"
                             f"{export_data['type']},"
                             f"{export_data['detail']},"
                             f"{export_data['x']},{export_data['y']},"
-                            f"{window_title},"
-                            f"{element_type},"
-                            f"{element_content}\n"
+                            f"{export_data['window_title']},"
+                            f"{export_data['element_type']},"
+                            f"{export_data['element_content']},"
+                            f"{export_data['window_handle']},"
+                            f"{export_data['window_class_name']},"
+                            f"{export_data['window_process_id']},"
+                            f"{export_data['window_process_name']},"
+                            f"{export_data['control_handle']},"
+                            f"{export_data['control_class_name']},"
+                            f"{export_data['control_text']}\n"
                         )
                         f.write(line)
                     except (IOError, OSError) as e:
@@ -439,10 +441,53 @@ class RecorderEngine:
                 )
 
             if op_event:
-                # 为鼠标事件获取窗口信息
-                if event_type == "mouse_click" or event_type == "mouse_move":
-                    window_info = self._get_window_info_at_position(x, y)
+                # 获取窗口信息和元素信息
+                window_info = None
+                element_info = None
+                detect_element = self.config["ui_detection"].get("enabled", True)
+
+                if event_type == "key_press" or event_type == "key_release":
+                    # 键盘事件使用活动窗口
+                    try:
+                        from window_info_monitor import get_monitor
+                        monitor = get_monitor()
+                        active_window = monitor.get_active_window_info()
+
+                        # 构建窗口信息
+                        window_info = WindowSpecificInfo(
+                            window_handle=active_window.handle,
+                            window_title=active_window.title,
+                            window_class_name=active_window.class_name,
+                            window_process_id=active_window.process_id,
+                            window_process_name=active_window.process_name,
+                            control_handle=0,
+                            control_class_name="",
+                            control_text=""
+                        )
+
+                        # 键盘事件：尝试识别焦点所在的元素
+                        if detect_element:
+                            try:
+                                from element_detector.element_recognizer import ElementRecognizer
+                                recognizer = ElementRecognizer()
+                                element_info = recognizer.recognize_focused_element()
+                                if element_info:
+                                    print(f"[Keyboard] Detected element: {element_info.element_content}")
+                            except ImportError:
+                                print("[Keyboard] ElementRecognizer not available, skipping element detection")
+                    except Exception as e:
+                        print(f"获取活动窗口信息失败: {e}")
+                elif event_type == "mouse_click" or event_type == "mouse_move":
+                    # 鼠标事件使用鼠标位置对应的窗口和元素
+                    result = self._get_window_info_at_position(x, y, detect_element)
+                    window_info = result["window_info"]
+                    element_info = result["element_info"]
+
+                if window_info:
                     op_event.window_info = window_info
+
+                if element_info:
+                    op_event.element_info = element_info
 
                 self.session_events.append(op_event)
                 # 发送到视频生成器
@@ -540,39 +585,107 @@ class RecorderEngine:
         self.is_paused = False
         print("✓ 录制已恢复")
 
-    def _get_window_info_at_position(self, x: int, y: int) -> Optional[WindowSpecificInfo]:
-        """获取指定位置的窗口信息
+    def _get_window_info_at_position(self, x: int, y: int, detect_element: bool = True) -> dict:
+        """获取指定位置的窗口信息和元素信息
 
         Args:
             x: X坐标
             y: Y坐标
+            detect_element: 是否检测UI元素
 
         Returns:
-            Optional[WindowSpecificInfo]: 窗口特定信息
+            dict: {'window_info': WindowSpecificInfo, 'element_info': UIElementInfo}
         """
+        result = {"window_info": None, "element_info": None}
+
         try:
             from window_info_monitor import get_monitor
 
             monitor = get_monitor()
             window_info = monitor.get_current_window_info()
 
-            # 获取控件信息
-            control_info = monitor.get_hovered_control_info()
+            control_info = monitor.get_hovered_control_info(require_text=False)
 
-            # 创建窗口特定信息
+            # 构建窗口特定信息，使用默认值确保字段不为None
             window_specific_info = WindowSpecificInfo(
-                window_handle=window_info.handle,
-                window_title=window_info.title,
-                window_class_name=window_info.class_name,
-                window_process_id=window_info.process_id,
-                window_process_name=window_info.process_name,
-                control_handle=control_info.handle if control_info else 0,
+                window_handle=window_info.handle or 0,
+                window_title=window_info.title or "",
+                window_class_name=window_info.class_name or "",
+                window_process_id=window_info.process_id or 0,
+                window_process_name=window_info.process_name or "",
+                control_handle=control_info.handle if control_info and control_info.handle > 0 else 0,
                 control_class_name=control_info.class_name if control_info else "",
                 control_text=control_info.text if control_info else ""
             )
 
-            return window_specific_info
+            result["window_info"] = window_specific_info
+
+            # 如果启用UI元素检测，识别该位置的元素
+            if detect_element and control_info:
+                try:
+                    # 使用WindowInfo作为UI元素信息（替代复杂的OCR检测）
+                    from data.event import UIElementType, UIElementInfo
+
+                    # 根据控件类名推断元素类型
+                    element_type_str = self._detect_element_type(control_info)
+
+                    # 构造UIElementInfo
+                    element_content = (
+                        control_info.text if control_info.text else
+                        control_info.caption if control_info.caption else
+                        "未检测到文本"
+                    )
+
+                    # 根据推断的类型转换
+                    element_type = getattr(UIElementType, element_type_str.upper(), UIElementType.OTHER)
+
+                    element_info = UIElementInfo(
+                        element_type=element_type,
+                        element_content=element_content,
+                        bounding_box=control_info.rect,
+                        confidence=0.9,  # 使用句柄信息，置信度高
+                        state={"window_handle": window_info.handle, "control_handle": control_info.handle}
+                    )
+
+                    result["element_info"] = element_info
+                    print(f"[UI Detection] Element: {element_type.value}, Content: {element_content if element_content else 'N/A'}")
+
+                except Exception as e:
+                    print(f"构建UI元素信息失败: {e}")
 
         except Exception as e:
             print(f"获取窗口信息失败: {e}")
-            return None
+
+        return result
+
+    def _detect_element_type(self, control_info) -> str:
+        """根据控件信息推断元素类型
+
+        Args:
+            control_info: 控件信息对象
+
+        Returns:
+            str: 元素类型（textbox, button, dropdown, 其他）
+        """
+        class_name = control_info.class_name.lower()
+        caption = (control_info.caption or "").lower()
+
+        # 根据类名判断常见控件类型
+        if any(keyword in class_name for keyword in ["edit", "textbox", "combobox", "listbox"]):
+            return "textbox"
+        elif "button" in class_name:
+            return "button"
+        elif "dropdown" in class_name or "combo" in class_name:
+            return "dropdown"
+        elif "check" in class_name or "radio" in class_name:
+            return "checkbox"
+        elif "tab" in class_name:
+            return "menu_item"
+
+        # 根据标题判断
+        if any(keyword in caption for keyword in ["确定", "取消", "ok", "cancel", "close", "save", "save as"]):
+            return "button"
+        elif any(keyword in caption for keyword in ["select", "choose"]):
+            return "dropdown"
+
+        return "other"

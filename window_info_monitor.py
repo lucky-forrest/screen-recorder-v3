@@ -138,14 +138,20 @@ class WindowInfoMonitor:
             # 获取窗口信息
             window_info = self._get_window_info(handle)
 
-            # 如果窗口信息为空，获取父窗口或Owner窗口
+            # 如果窗口标题为空，尝试获取父窗口或Owner窗口
             if not window_info.title:
                 window_info = self._get_owner_window_info(handle)
+
+            # 如果仍然没有标题，尝试使用窗口类名作为标识
+            if not window_info.title:
+                window_info.title = f"[{window_info.class_name}]"
 
             return window_info
 
         except Exception as e:
             print(f"获取窗口信息失败: {e}")
+            import traceback
+            traceback.print_exc()
             return WindowInfo(
                 handle=0,
                 title="",
@@ -168,13 +174,22 @@ class WindowInfoMonitor:
             WindowInfo: 窗口信息
         """
         try:
+            # 获取窗口类名（先获取）
+            class_name = win32gui.GetClassName(handle)
+
             # 获取窗口标题
             title = win32gui.GetWindowText(handle)
-            if not title:
-                title = "(无标题)"
 
-            # 获取窗口类名
-            class_name = win32gui.GetClassName(handle)
+            # 如果标题为空，尝试获取父窗口信息来获取标题
+            if not title:
+                parent_handle = win32gui.GetParent(handle)
+                if parent_handle:
+                    parent_info = self._get_window_info(parent_handle)
+                    title = parent_info.title
+
+            # 如果仍然没有标题，使用窗口类名作为标识
+            if not title:
+                title = f"[{class_name}]"
 
             # 获取窗口进程ID
             process_id = win32process.GetWindowThreadProcessId(handle)[1]
@@ -214,11 +229,38 @@ class WindowInfoMonitor:
 
         except pywintypes.error as e:
             print(f"获取窗口信息失败 (handle={handle}): {e}")
+            import traceback
+            traceback.print_exc()
             # 尝试使用缓存
-            return self._window_cache.get(handle, WindowInfo(0, "", "", 0, ""))
+            window_info = self._window_cache.get(handle, None)
+            if window_info:
+                return window_info
+            return WindowInfo(
+                handle=0,
+                title="",
+                class_name="",
+                process_id=0,
+                process_name="",
+                visible=False,
+                enabled=False,
+                active=False,
+                rect=(0, 0, 0, 0)
+            )
         except Exception as e:
             print(f"获取窗口信息时发生意外错误: {e}")
-            return WindowInfo(0, "", "", 0, "")
+            import traceback
+            traceback.print_exc()
+            return WindowInfo(
+                handle=0,
+                title="",
+                class_name="",
+                process_id=0,
+                process_name="",
+                visible=False,
+                enabled=False,
+                active=False,
+                rect=(0, 0, 0, 0)
+            )
 
     def _get_owner_window_info(self, handle: int) -> WindowInfo:
         """获取拥有者窗口信息
@@ -318,8 +360,11 @@ class WindowInfoMonitor:
 
         return controls
 
-    def get_hovered_control_info(self) -> Optional[ControlInfo]:
+    def get_hovered_control_info(self, require_text: bool = False) -> Optional[ControlInfo]:
         """获取鼠标悬停位置的控件信息
+
+        Args:
+            require_text: 是否要求控件必须有文本内容（默认False）
 
         Returns:
             Optional[ControlInfo]: 控件信息，如果没有找到则返回None
@@ -334,34 +379,63 @@ class WindowInfoMonitor:
             if not window_handle:
                 return None
 
-            # 直接检索鼠标位置对应的控件
-            control_handle = win32gui.WindowFromPoint((x, y))
+            # 使用更容易获取控件的API
+            # 先尝试从子控件列表中查找
+            control_handle = None
+            child_controls = self.get_window_controls(window_handle)
+            if child_controls:
+                # 在子控件中查找包含鼠标位置的控件
+                for control in child_controls:
+                    rect = control.rect
+                    if rect[0] <= x <= rect[2] and rect[1] <= y <= rect[3]:
+                        control_handle = control.handle
+                        break
+
+            # 如果在子控件中没找到，尝试使用WindowFromPoint
+            if not control_handle:
+                control_handle = win32gui.WindowFromPoint((x, y))
 
             if not control_handle:
                 return None
 
-            # 检查该控件是否是窗口的子控件
-            parent = win32gui.GetParent(control_handle)
+            # 确保该控件是窗口的子控件或本身就是窗口
+            parent_window = win32gui.GetParent(control_handle)
+            if parent_window != window_handle and parent_window != 0:
+                # 不是窗口的直接子控件
+                return None
 
-            # 如果是直接在窗口上点击的控件，或者该控件的父窗口是我们感兴趣的窗口
-            if parent == window_handle or win32gui.GetParent(window_handle) == control_handle:
-                # 使用WindowFromPoint获取到的通常是更精细的控件
+            # 标记是否使用handle本身
+            is_window = (parent_window == 0)
+
+            if is_window:
+                # 使用窗口本身作为控件
                 control_handle = window_handle
 
             style = win32gui.GetWindowLong(control_handle, win32con.GWL_STYLE)
 
             # 检查是否是有效的交互控件
-            is_valid_control = (
+            has_valid_state = (
                 win32gui.IsWindowVisible(control_handle) and
-                win32gui.IsWindowEnabled(control_handle) and
-                win32gui.GetWindowText(control_handle)
+                win32gui.IsWindowEnabled(control_handle)
             )
 
-            if not is_valid_control:
+            # 如果要求文本内容，则额外检查文本是否存在（但不强制要求）
+            if require_text:
+                temp_control = self.get_window_controls(window_handle)
+                has_text = False
+                if temp_control:
+                    for ctrl in temp_control:
+                        if ctrl.handle == control_handle:
+                            has_text = bool(ctrl.text)
+                            break
+                has_valid_state = has_valid_state and has_text
+
+            if not has_valid_state:
                 return None
 
             rect = win32gui.GetWindowRect(control_handle)
             text = win32gui.GetWindowText(control_handle)
+            # 如果没有文本，使用控件类名
             caption = text if text else win32gui.GetClassName(control_handle)
 
             control_info = ControlInfo(
@@ -379,11 +453,49 @@ class WindowInfoMonitor:
 
         except Exception as e:
             print(f"获取悬停控件信息失败: {e}")
+            import traceback
+            traceback.print_exc()
             return None
 
 
 # 全局单例
 _window_monitor: Optional[WindowInfoMonitor] = None
+
+
+def get_active_window_info(self) -> WindowInfo:
+        """获取当前活动窗口的信息（用于键盘事件等没有坐标的事件）
+
+        Returns:
+            WindowInfo: 当前活动窗口信息
+        """
+        try:
+            handle = win32gui.GetForegroundWindow()
+            if not handle:
+                return WindowInfo(
+                    handle=0,
+                    title="",
+                    class_name="",
+                    process_id=0,
+                    process_name="",
+                    visible=False,
+                    enabled=False,
+                    active=False,
+                    rect=(0, 0, 0, 0)
+                )
+            return self._get_window_info(handle)
+        except Exception as e:
+            print(f"获取活动窗口信息失败: {e}")
+            return WindowInfo(
+                handle=0,
+                title="",
+                class_name="",
+                process_id=0,
+                process_name="",
+                visible=False,
+                enabled=False,
+                active=False,
+                rect=(0, 0, 0, 0)
+            )
 
 
 def get_monitor() -> WindowInfoMonitor:
