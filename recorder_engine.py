@@ -3,6 +3,7 @@
 核心录制引擎，协调事件采集、数据导出。
 """
 import json
+import csv
 import threading
 import time
 import os
@@ -47,6 +48,7 @@ class RecorderEngine:
         self.current_session = None
         self.is_paused = False  # 新增：暂停状态
         self._pause_event = threading.Event()  # 新增：暂停标志位
+        self.application_name = self.config["recording"].get("application_name", "")  # 目标应用名称（可选）
 
         # 事件队列
         self.event_queue: Queue = Queue(maxsize=self.config["recording"]["event_queue_size"])
@@ -166,17 +168,17 @@ class RecorderEngine:
     
     def _process_mouse_move_events(self, events: List[OperationEvent]) -> List[OperationEvent]:
         """预处理鼠标移动事件，合并连续的移动事件为开始/结束两条
-        
+
         Args:
             events: 原始事件列表
-            
+
         Returns:
             处理后的事件列表
         """
         processed_events = []
         # 移动事件缓存：[start_event, last_event]
         move_cache = None
-        
+
         for event in events:
             # 判断是否为鼠标移动事件
             if event.event_type == EventType.MOUSE_MOVE:
@@ -194,13 +196,36 @@ class RecorderEngine:
                     move_cache = None
                 # 添加非移动事件
                 processed_events.append(event)
-        
+
         # 处理遍历结束后剩余的移动事件缓存
         if move_cache is not None:
             processed_events.append(move_cache[0])
             processed_events.append(move_cache[1])
-        
+
         return processed_events
+
+
+
+
+
+    def _filter_and_process_events(self) -> List[OperationEvent]:
+        """过滤事件并预处理鼠标移动事件
+
+        Returns:
+            处理后的筛选后事件列表
+        """
+        # 筛选匹配应用名称的事件
+        filtered_events = []
+        for event in self.session_events:
+            if event.window_info and event.window_info.window_title:
+                # 如果设置了应用名称，检查窗口标题是否完全匹配（不区分大小写）
+                if self.application_name:
+                    if self.application_name.lower() == event.window_info.window_title.lower():
+                        filtered_events.append(event)
+                        
+
+        # 预处理：合并连续的鼠标移动事件
+        return self._process_mouse_move_events(filtered_events)
 
     def save_to_csv_with_message_name(self, message_name: str) -> Optional[str]:
         """保存为CSV格式（使用消息名称作为文件夹）
@@ -225,34 +250,47 @@ class RecorderEngine:
             print(f"✗ 创建消息目录失败: {e}")
             return None
 
-        # 预处理事件：合并连续的鼠标移动事件
-        processed_events = self._process_mouse_move_events(list(self.session_events))
+        # 预处理事件：合并连续的鼠标移动事件，并筛选应用名称
+        processed_events = self._filter_and_process_events()
 
         # 写入CSV
         try:
-            with open(filepath, "w", encoding="utf-8") as f:
-                f.write("timestamp,event_type,detail,x,y,window_title,element_type,element_content,window_handle,window_class_name,window_process_id,window_process_name,window_visible,window_enabled,window_active,control_handle,control_class_name,control_text\n")
+            with open(filepath, "w", encoding="utf-8", newline='') as f:
+                writer = csv.writer(f)
+                # 写入CSV头
+                writer.writerow([
+                    'timestamp', 'event_type', 'detail', 'x', 'y',
+                    'window_title', 'element_type', 'element_content',
+                    'window_handle', 'window_class_name',
+                    'window_process_id', 'window_process_name',
+                    'window_visible', 'window_enabled', 'window_active',
+                    'control_handle', 'control_class_name', 'control_text'
+                ])
 
+                # 写入事件数据
                 for event in processed_events:
                     try:
                         export_data = event.get_export_dict()
-                        line = (
-                            f"{export_data['time']},"
-                            f"{export_data['type']},"
-                            f"{export_data['detail']},"
-                            f"{export_data['x']},{export_data['y']},"
-                            f"{export_data['window_title']},"
-                            f"{export_data['element_type']},"
-                            f"{export_data['element_content']},"
-                            f"{export_data['window_handle']},"
-                            f"{export_data['window_class_name']},"
-                            f"{export_data['window_process_id']},"
-                            f"{export_data['window_process_name']},"
-                            f"{export_data['control_handle']},"
-                            f"{export_data['control_class_name']},"
-                            f"{export_data['control_text']}\n"
-                        )
-                        f.write(line)
+                        writer.writerow([
+                            export_data['time'],
+                            export_data['type'],
+                            export_data['detail'],
+                            export_data['x'],
+                            export_data['y'],
+                            export_data['window_title'],
+                            export_data['element_type'],
+                            export_data['element_content'],
+                            export_data['window_handle'],
+                            export_data['window_class_name'],
+                            export_data['window_process_id'],
+                            export_data['window_process_name'],
+                            export_data['window_visible'],
+                            export_data['window_enabled'],
+                            export_data['window_active'],
+                            export_data['control_handle'],
+                            export_data['control_class_name'],
+                            export_data['control_text']
+                        ])
                     except (IOError, OSError) as e:
                         print(f"Error writing event to CSV: {e}")
 
@@ -286,8 +324,8 @@ class RecorderEngine:
             print(f"✗ 创建消息目录失败: {e}")
             return None
 
-        # 预处理事件：合并连续的鼠标移动事件
-        processed_events = self._process_mouse_move_events(list(self.session_events))
+        # 预处理事件：合并连续的鼠标移动事件，并筛选应用名称
+        processed_events = self._filter_and_process_events()
 
         # 构建JSON数据
         try:
@@ -452,6 +490,8 @@ class RecorderEngine:
                         from window_info_monitor import get_monitor
                         monitor = get_monitor()
                         active_window = monitor.get_active_window_info()
+                        if window_info.window_title == self.application_name:
+                            print(f"[Keyboard] Active window: {active_window})")
 
                         # 构建窗口信息
                         window_info = WindowSpecificInfo(
@@ -482,6 +522,9 @@ class RecorderEngine:
                     result = self._get_window_info_at_position(x, y, detect_element)
                     window_info = result["window_info"]
                     element_info = result["element_info"]
+                    if window_info.window_title == self.application_name:
+                        print(f"[mouse] window info: {window_info})")
+
 
                 if window_info:
                     op_event.window_info = window_info

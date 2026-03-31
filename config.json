@@ -6,7 +6,8 @@
     },
     "recording": {
         "enabled": true,
-        "event_queue_size": 10000
+        "event_queue_size": 10000,
+        "application_name": "豆包"
     },
     "video": {
         "enabled": true,

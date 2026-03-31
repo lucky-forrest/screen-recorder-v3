@@ -44,6 +44,7 @@ class OperationRecorderGUI:
         self.is_exporting = False  # 新增：标记是否正在导出
         self._stop_requested = False  # 新增：标记是否已请求停止
         self.message_name: Optional[str] = None  # 新增：录制消息名称
+        self.application_name: Optional[str] = None  # 新增：录制应用名称
 
         # 保存动画相关
         self.save_indicator_id = None
@@ -175,27 +176,127 @@ class OperationRecorderGUI:
             print(f"[GUI] Starting recording...")
             self._stop_requested = False  # 重置停止请求标记
 
-            self.session_id = self.recorder.start_recording()
-            self.event_count = 0
-            self.recording_start_time = datetime.now()
-            self.is_recording = True
+            # 获取录制应用名称（从配置文件读取默认值）
+            default_application_name = self.config.get("recording", {}).get("application_name", "")
+            application_name = default_application_name.strip() or None
 
-            print(f"[GUI] Session started: {self.session_id}")
+            # 显示应用名称输入对话框
+            confirm_window = tk.Toplevel(self.root)
+            confirm_window.title("开始录制")
+            confirm_window.geometry("520x320")
+            confirm_window.resizable(False, False)
+            confirm_window.transient(self.root)
+            confirm_window.grab_set()
+            confirm_window.configure(bg="#f0f0f0")
 
-            # 更新按钮状态
-            self.start_button.config(state=tk.DISABLED)
-            self.pause_button.config(state=tk.NORMAL)
-            self.stop_button.config(state=tk.NORMAL)
-            self.export_button.config(state=tk.DISABLED)
+            # 窗口居中
+            x = self.root.winfo_x() + (self.root.winfo_width() - 520) // 2
+            y = self.root.winfo_y() + (self.root.winfo_height() - 320) // 2
+            confirm_window.geometry(f"+{x}+{y}")
 
-            # 更新状态显示
-            self._update_status()
-            self._log(f"📷 录制开始: Session {self.session_id}")
-            self._log(f"👆 已注册事件回调，请在键盘上操作...")
-            print(f"[GUI] Ready - waiting for events")
+            # 主容器
+            main_frame = ttk.Frame(confirm_window, padding="20")
+            main_frame.pack(fill=tk.BOTH, expand=True)
 
-            # 启动视频生成
-            self.video_generator.start_generating(self.session_id)
+            # 标题区域
+            title_frame = ttk.Frame(main_frame)
+            title_frame.pack(fill=tk.X, pady=(0, 15))
+
+            ttk.Label(
+                title_frame,
+                text="开始录制前",
+                font=("Microsoft YaHei", 16, "bold"),
+                foreground="#2c3e50"
+            ).pack(anchor=tk.W)
+
+            ttk.Separator(main_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(0, 15))
+
+            # 录制应用名称输入区域
+            input_frame = ttk.LabelFrame(main_frame, text="录制应用名称", padding="15")
+            input_frame.pack(fill=tk.X)
+
+            ttk.Label(
+                input_frame,
+                text="请输入或选择要录制的应用：",
+                font=("Microsoft YaHei", 11)
+            ).pack(anchor=tk.W, pady=(0, 8))
+
+            self.application_name_entry = ttk.Entry(
+                input_frame,
+                font=("Microsoft YaHei", 12),
+                width=45
+            )
+            self.application_name_entry.insert(0, application_name or "请输入应用名称")
+            self.application_name_entry.pack(fill=tk.X, ipady=6)
+            self.application_name_entry.focus()
+
+            ttk.Label(
+                input_frame,
+                text="* 此名称将用于筛选录制的事件",
+                font=("Microsoft YaHei", 9),
+                foreground="#666666"
+            ).pack(anchor=tk.W, pady=(5, 0))
+
+            # 按钮
+            btn_frame = ttk.Frame(main_frame)
+            btn_frame.pack(fill=tk.X, pady=(20, 0))
+
+            btn_frame.columnconfigure(0, weight=1)
+            btn_frame.columnconfigure(1, weight=0)
+
+            def on_start():
+                """确认开始录制的回调"""
+                application_name = self.application_name_entry.get().strip()
+                if not application_name:
+                    application_name = None
+                confirm_window.destroy()
+
+                # 保存应用名称
+                self.application_name = application_name
+
+                # 开始录制
+                self.session_id = self.recorder.start_recording()
+                self.event_count = 0
+                self.recording_start_time = datetime.now()
+                self.is_recording = True
+
+                print(f"[GUI] Session started: {self.session_id}")
+                print(f"[GUI] Application name: {application_name}")
+
+                # 更新按钮状态
+                self.start_button.config(state=tk.DISABLED)
+                self.pause_button.config(state=tk.NORMAL)
+                self.stop_button.config(state=tk.NORMAL)
+                self.export_button.config(state=tk.DISABLED)
+
+                # 更新状态显示
+                self._update_status()
+                app_text = application_name or "所有应用"
+                self._log(f"📷 录制开始: Session {self.session_id}")
+                self._log(f"🎯 录制应用: {app_text}")
+                self._log(f"👆 已注册事件回调，请在键盘上操作...")
+                print(f"[GUI] Ready - waiting for events")
+
+                # 启动视频生成
+                self.video_generator.start_generating(self.session_id)
+
+            def on_cancel():
+                """取消开始录制"""
+                confirm_window.destroy()
+
+            ttk.Button(
+                btn_frame,
+                text="取消",
+                command=on_cancel,
+                width=10
+            ).grid(row=0, column=1, padx=(0, 10), pady=5)
+
+            ttk.Button(
+                btn_frame,
+                text="开始录制",
+                command=on_start,
+                width=12
+            ).grid(row=0, column=2, padx=(0, 5), pady=5)
 
         except Exception as e:
             self._log(f"启动录制失败: {e}")
