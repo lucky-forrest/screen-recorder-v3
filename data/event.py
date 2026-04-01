@@ -165,6 +165,7 @@ class WindowSpecificInfo:
     control_class_name: str = ""
     control_text: str = ""
     rect: tuple[int, int, int, int] = (0, 0, 0, 0)  # (left, top, right, bottom)，可用于检测是否为有效值
+    relative_coordinates: dict[str, int] = field(default_factory=lambda: {"x": 0, "y": 0, "width": 0, "height": 0})
 
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
@@ -180,7 +181,8 @@ class WindowSpecificInfo:
             "control_handle": self.control_handle,
             "control_class_name": self.control_class_name,
             "control_text": self.control_text,
-            "rect": self.rect if self.rect and all(v > 0 for v in self.rect) else (0, 0, 0, 0)
+            "rect": self.rect if self.rect and all(v > 0 for v in self.rect) else (0, 0, 0, 0),
+            "relative_coordinates": self.relative_coordinates if self.relative_coordinates  else {"x": 0, "y": 0, "width": 0, "height": 0},
         }
 
 
@@ -236,7 +238,8 @@ class OperationEvent:
             "control_handle": 0,
             "control_class_name": "",
             "control_text": "",
-            "rect": self.element_info.bounding_box if self.element_info and self.element_info.bounding_box else None,
+            "rect": self.element_info.bounding_box if self.element_info and self.element_info.bounding_box else (0, 0, 0, 0),
+            "relative_coordinates": self.window_info.relative_coordinates if self.window_info  else {"x": 0, "y": 0, "width": 0, "height": 0},
         }
 
         # 添加窗口信息
@@ -250,6 +253,8 @@ class OperationEvent:
         """获取完整的JSON格式（包含所有上下文和数据）
         注意：返回的字典键顺序必须与JSON导出的字段顺序一致！
         """
+        relative_coords_default = {"x": 0, "y": 0, "width": 0, "height": 0}
+
         event_data = {
             "time": self.timestamp.isoformat(),
             "type": self.event_type.value,
@@ -272,7 +277,8 @@ class OperationEvent:
             "control_class_name": "",
             "control_text": "",
             "application_name": self.application_name or "",
-            "rect": self.element_info.bounding_box if self.element_info and self.element_info.bounding_box else None,
+            "rect": self.element_info.bounding_box if self.element_info and self.element_info.bounding_box else (0, 0, 0, 0),
+            "relative_coordinates": self.window_info.relative_coordinates if self.window_info else relative_coords_default,
 
         }
 

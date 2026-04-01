@@ -157,7 +157,7 @@ class KeyboardHandler:
                 'timestamp': datetime.now().isoformat()
             }
 
-            print(f"[Keyboard Handler] Event ready: {event_dict}")
+            # print(f"[Keyboard Handler] Event ready: {event_dict}")
             self._process_event(event_dict)
 
         except Exception as e:

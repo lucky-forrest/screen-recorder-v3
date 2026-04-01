@@ -210,30 +210,6 @@ class RecorderEngine:
         return processed_events
 
 
-
-
-
-    def _filter_and_process_events(self) -> List[OperationEvent]:
-        """过滤事件并预处理鼠标移动事件
-
-        Returns:
-            处理后的筛选后事件列表
-        """
-        # 筛选匹配应用名称的事件
-        filtered_events = []
-        for event in self.session_events:
-            if event.window_info and event.window_info.window_title:
-                # 如果设置了应用名称，检查窗口标题是否完全匹配（不区分大小写）
-                if self.application_name:
-                    if self.application_name.lower() == event.window_info.window_title.lower():
-                        filtered_events.append(event)
-                    # else:
-                    #     print(f"过滤掉事件（窗口标题不匹配）: {self.application_name} - {event.window_info.window_title}")
-                        
-
-        # 预处理：合并连续的鼠标移动事件
-        return self._process_mouse_move_events(filtered_events)
-
     def save_to_csv_with_message_name(self, message_name: str) -> Optional[str]:
         """保存为CSV格式（使用消息名称作为文件夹）
 
@@ -258,7 +234,7 @@ class RecorderEngine:
             return None
 
         # 预处理事件：合并连续的鼠标移动事件，并筛选应用名称
-        processed_events = self._filter_and_process_events()
+        processed_events = self._process_mouse_move_events(self.session_events)
 
         # 写入CSV
         try:
@@ -271,7 +247,7 @@ class RecorderEngine:
                     'window_handle', 'window_class_name',
                     'window_process_id', 'window_process_name',
                     'window_visible', 'window_enabled', 'window_active',
-                    'control_handle', 'control_class_name', 'control_text', 'rect'
+                    'control_handle', 'control_class_name', 'control_text', 'rect','relative_coordinates'
                 ])
 
                 # 写入事件数据
@@ -280,6 +256,7 @@ class RecorderEngine:
                         export_data = event.get_export_dict()
                         # 处理rect字段，确保不为None
                         rect_value = export_data['rect']
+                        relative_coordinates = export_data['relative_coordinates']
                         if rect_value is None:
                             rect_str = ""
                         elif isinstance(rect_value, tuple) and len(rect_value) == 4:
@@ -311,6 +288,7 @@ class RecorderEngine:
                             export_data['control_class_name'],
                             export_data['control_text'],
                             rect_str,
+                            relative_coordinates 
                         ])
                     except (IOError, OSError) as e:
                         print(f"Error writing event to CSV: {e}")
@@ -346,7 +324,7 @@ class RecorderEngine:
             return None
 
         # 预处理事件：合并连续的鼠标移动事件，并筛选应用名称
-        processed_events = self._filter_and_process_events()
+        processed_events = self._process_mouse_move_events(self.session_events)
 
         # 构建JSON数据
         try:
@@ -490,6 +468,7 @@ class RecorderEngine:
             if event_type == "key_press" or event_type == "key_release":
                 op_event = self._create_operation_event_from_keyboard(event_data)
             elif event_type == "mouse_click":
+                # print(f"[Mouse Handler] Mouse click event: {event_data}")
                 op_event = self._create_operation_event_from_mouse(event_data)
             elif event_type == "mouse_move":
                 # 鼠标移动时也添加事件用于捕捉窗口信息
@@ -521,13 +500,14 @@ class RecorderEngine:
                             window_class_name=active_window.class_name,
                             window_process_id=active_window.process_id,
                             window_process_name=active_window.process_name,
-                            window_visible=active_window.visible if hasattr(active_window, 'visible') else False,
-                            window_enabled=active_window.enabled if hasattr(active_window, 'enabled') else False,
-                            window_active=active_window.active if hasattr(active_window, 'active') else False,
+                            window_visible=active_window.visible,
+                            window_enabled=active_window.enabled,
+                            window_active=active_window.active,
                             control_handle=0,
                             control_class_name="",
                             control_text="",
-                            rect=active_window.rect if hasattr(active_window, 'rect') and active_window.rect else (0, 0, 0, 0)
+                            rect=active_window.rect,
+                            relative_coordinates=active_window.relative_coordinates
                         )
 
                         # 键盘事件：尝试识别焦点所在的元素
@@ -557,8 +537,10 @@ class RecorderEngine:
                 if element_info:
                     op_event.element_info = element_info
 
-                if self.application_name.lower() == op_event.window_info.window_title.lower():
-                    self.session_events.append(op_event)
+                # 检查窗口信息是否存在
+                if op_event.window_info and self.application_name:
+                    if self.application_name.lower() == op_event.window_info.window_title.lower():
+                        self.session_events.append(op_event)
                 # 发送到视频生成器
                 try:
                     if hasattr(self, 'video_generator') and self.video_generator._is_generating:
@@ -674,21 +656,23 @@ class RecorderEngine:
             window_info = monitor.get_current_window_info()
 
             control_info = monitor.get_hovered_control_info(require_text=False)
+            # print(f"[control Info] Control: {control_info}")
 
-            # 构建窗口特定信息，使用默认值确保字段不为None
+            # 构建窗口特定信息
             window_specific_info = WindowSpecificInfo(
                 window_handle=window_info.handle or 0,
                 window_title=window_info.title or "",
                 window_class_name=window_info.class_name or "",
                 window_process_id=window_info.process_id or 0,
                 window_process_name=window_info.process_name or "",
-                window_visible=window_info.visible if hasattr(window_info, 'visible') else False,
-                window_enabled=window_info.enabled if hasattr(window_info, 'enabled') else False,
-                window_active=window_info.active if hasattr(window_info, 'active') else False,
+                window_visible=window_info.visible,
+                window_enabled=window_info.enabled,
+                window_active=window_info.active,
                 control_handle=control_info.handle if control_info and control_info.handle > 0 else 0,
                 control_class_name=control_info.class_name if control_info else "",
                 control_text=control_info.text if control_info else "",
-                rect=window_info.rect if hasattr(window_info, 'rect') and window_info.rect else (0, 0, 0, 0)
+                rect=window_info.rect,
+                relative_coordinates=window_info.relative_coordinates
             )
 
             result["window_info"] = window_specific_info

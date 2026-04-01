@@ -224,7 +224,7 @@ class WindowInfo:
     visible: bool                  # 窗口是否可见
     enabled: bool                  # 窗口是否启用
     active: bool                   # 窗口是否是活动窗口
-    rect: tuple[int, int, int, int]  # 窗口位置和尺寸
+    rect: tuple[int, int, int, int]  # 窗口位置和尺寸 (左、 上、 右、 下)
 ```
 
 #### ControlInfo
@@ -240,7 +240,7 @@ class ControlInfo:
     is_enabled: bool               # 是否启用
     is_visible: bool               # 是否可见
     is_focused: bool               # 是否处于焦点
-    rect: tuple[int, int, int, int]  # 控件位置和尺寸
+    rect: tuple[int, int, int, int]  # 控件位置和尺寸 (左、 上、 右、 下)
 ```
 
 ## 应用场景
