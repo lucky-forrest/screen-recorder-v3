@@ -255,7 +255,7 @@ class OperationRecorderGUI:
                 self.application_name = application_name
 
                 # 开始录制
-                self.session_id = self.recorder.start_recording()
+                self.session_id = self.recorder.start_recording(self.application_name)
                 self.event_count = 0
                 self.recording_start_time = datetime.now()
                 self.is_recording = True

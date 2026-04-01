@@ -7,7 +7,7 @@
     "recording": {
         "enabled": true,
         "event_queue_size": 10000,
-        "application_name": "豆包"
+        "application_name": "模拟用户行为自动化工具 v1.0.0"
     },
     "video": {
         "enabled": true,

@@ -75,14 +75,19 @@ class RecorderEngine:
         # 线程锁
         self._lock = threading.Lock()
 
-    def start_recording(self) -> str:
+    def start_recording(self, application_name: str = None) -> str:
         """开始录制
+
+        Args:
+            application_name: 目标应用名称
 
         Returns:
             str: session_id
         """
         if self.is_recording:
             raise RuntimeError("Already recording")
+        
+        self.application_name = application_name or self.application_name
 
         # 重置暂停状态
         self.is_paused = False
@@ -222,6 +227,8 @@ class RecorderEngine:
                 if self.application_name:
                     if self.application_name.lower() == event.window_info.window_title.lower():
                         filtered_events.append(event)
+                    # else:
+                    #     print(f"过滤掉事件（窗口标题不匹配）: {self.application_name} - {event.window_info.window_title}")
                         
 
         # 预处理：合并连续的鼠标移动事件
@@ -264,13 +271,26 @@ class RecorderEngine:
                     'window_handle', 'window_class_name',
                     'window_process_id', 'window_process_name',
                     'window_visible', 'window_enabled', 'window_active',
-                    'control_handle', 'control_class_name', 'control_text'
+                    'control_handle', 'control_class_name', 'control_text', 'rect'
                 ])
 
                 # 写入事件数据
                 for event in processed_events:
                     try:
                         export_data = event.get_export_dict()
+                        # 处理rect字段，确保不为None
+                        rect_value = export_data['rect']
+                        if rect_value is None:
+                            rect_str = ""
+                        elif isinstance(rect_value, tuple) and len(rect_value) == 4:
+                            # 检查tuple是否为有效值
+                            if all(v > 0 for v in rect_value):
+                                rect_str = f"{rect_value[0]},{rect_value[1]},{rect_value[2]},{rect_value[3]}"
+                            else:
+                                rect_str = ""
+                        else:
+                            rect_str = ""
+
                         writer.writerow([
                             export_data['time'],
                             export_data['type'],
@@ -289,7 +309,8 @@ class RecorderEngine:
                             export_data['window_active'],
                             export_data['control_handle'],
                             export_data['control_class_name'],
-                            export_data['control_text']
+                            export_data['control_text'],
+                            rect_str,
                         ])
                     except (IOError, OSError) as e:
                         print(f"Error writing event to CSV: {e}")
@@ -490,8 +511,8 @@ class RecorderEngine:
                         from window_info_monitor import get_monitor
                         monitor = get_monitor()
                         active_window = monitor.get_active_window_info()
-                        if window_info.window_title == self.application_name:
-                            print(f"[Keyboard] Active window: {active_window})")
+                        # if window_info.window_title == self.application_name:
+                        #     print(f"[Keyboard] Active window: {active_window})")
 
                         # 构建窗口信息
                         window_info = WindowSpecificInfo(
@@ -500,9 +521,13 @@ class RecorderEngine:
                             window_class_name=active_window.class_name,
                             window_process_id=active_window.process_id,
                             window_process_name=active_window.process_name,
+                            window_visible=active_window.visible if hasattr(active_window, 'visible') else False,
+                            window_enabled=active_window.enabled if hasattr(active_window, 'enabled') else False,
+                            window_active=active_window.active if hasattr(active_window, 'active') else False,
                             control_handle=0,
                             control_class_name="",
-                            control_text=""
+                            control_text="",
+                            rect=active_window.rect if hasattr(active_window, 'rect') and active_window.rect else (0, 0, 0, 0)
                         )
 
                         # 键盘事件：尝试识别焦点所在的元素
@@ -522,8 +547,8 @@ class RecorderEngine:
                     result = self._get_window_info_at_position(x, y, detect_element)
                     window_info = result["window_info"]
                     element_info = result["element_info"]
-                    if window_info.window_title == self.application_name:
-                        print(f"[mouse] window info: {window_info})")
+                    # if window_info.window_title == self.application_name:
+                    #     print(f"[mouse] window info: {window_info})")
 
 
                 if window_info:
@@ -532,7 +557,8 @@ class RecorderEngine:
                 if element_info:
                     op_event.element_info = element_info
 
-                self.session_events.append(op_event)
+                if self.application_name.lower() == op_event.window_info.window_title.lower():
+                    self.session_events.append(op_event)
                 # 发送到视频生成器
                 try:
                     if hasattr(self, 'video_generator') and self.video_generator._is_generating:
@@ -656,9 +682,13 @@ class RecorderEngine:
                 window_class_name=window_info.class_name or "",
                 window_process_id=window_info.process_id or 0,
                 window_process_name=window_info.process_name or "",
+                window_visible=window_info.visible if hasattr(window_info, 'visible') else False,
+                window_enabled=window_info.enabled if hasattr(window_info, 'enabled') else False,
+                window_active=window_info.active if hasattr(window_info, 'active') else False,
                 control_handle=control_info.handle if control_info and control_info.handle > 0 else 0,
                 control_class_name=control_info.class_name if control_info else "",
-                control_text=control_info.text if control_info else ""
+                control_text=control_info.text if control_info else "",
+                rect=window_info.rect if hasattr(window_info, 'rect') and window_info.rect else (0, 0, 0, 0)
             )
 
             result["window_info"] = window_specific_info
@@ -691,7 +721,7 @@ class RecorderEngine:
                     )
 
                     result["element_info"] = element_info
-                    print(f"[UI Detection] Element: {element_type.value}, Content: {element_content if element_content else 'N/A'}")
+                    # print(f"[UI Detection] Element: {element_type.value}, rect: {element_info.bounding_box}")
 
                 except Exception as e:
                     print(f"构建UI元素信息失败: {e}")
@@ -710,25 +740,59 @@ class RecorderEngine:
         Returns:
             str: 元素类型（textbox, button, dropdown, 其他）
         """
-        class_name = control_info.class_name.lower()
+        if not control_info:
+            return "other"
+    
+        class_name = control_info.class_name.lower() if control_info.class_name else ""
         caption = (control_info.caption or "").lower()
+        text = (control_info.text or "").lower()
 
         # 根据类名判断常见控件类型
-        if any(keyword in class_name for keyword in ["edit", "textbox", "combobox", "listbox"]):
+        if any(keyword in class_name for keyword in [
+            "edit", "richedit", "combobox", "listbox", "textbox", "syslistview32"
+        ]):
             return "textbox"
-        elif "button" in class_name:
+        elif any(keyword in class_name for keyword in [
+            "button", "sysbutton", "static", "toolbarwindow32"
+        ]):
             return "button"
-        elif "dropdown" in class_name or "combo" in class_name:
+        elif any(keyword in class_name for keyword in [
+            "combobox", "syscombobox32", "updown", "scrollbar"
+        ]):
             return "dropdown"
-        elif "check" in class_name or "radio" in class_name:
+        elif any(keyword in class_name for keyword in [
+            "button", "static"
+        ]) and any(keyword in text for keyword in [
+            "check", "radio", "option"
+        ]):
             return "checkbox"
-        elif "tab" in class_name:
+        elif any(keyword in class_name for keyword in [
+            "sysTabControl32", "msctls_trackbar32"
+        ]):
             return "menu_item"
 
         # 根据标题判断
-        if any(keyword in caption for keyword in ["确定", "取消", "ok", "cancel", "close", "save", "save as"]):
+        if any(keyword in caption for keyword in [
+            "确定", "取消", "ok", "cancel", "close", "save", "save as", "open", "new", "delete"
+        ]):
             return "button"
-        elif any(keyword in caption for keyword in ["select", "choose"]):
+        elif any(keyword in caption for keyword in [
+            "select", "choose", "browse", "find", "search"
+        ]):
+            return "dropdown"
+        elif any(keyword in text for keyword in [
+            "确定", "取消", "ok", "cancel", "close", "save", "save as", "open", "new", "delete"
+        ]):
+            return "button"
+
+        # 根据文本内容判断
+        if any(keyword in text for keyword in [
+            "输入", "编辑", "文本", "搜索", "查询"
+        ]):
+            return "textbox"
+        elif any(keyword in text for keyword in [
+            "选项", "选择", "下拉", "菜单"
+        ]):
             return "dropdown"
 
         return "other"

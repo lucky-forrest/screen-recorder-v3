@@ -46,7 +46,6 @@ site/
 docs/_build/
 
 # Data and media files
-data/
 videos/
 logs/
 temp/
