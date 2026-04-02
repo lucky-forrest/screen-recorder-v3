@@ -13,6 +13,7 @@ from data.event import OperationEvent
 import utils.timestamp_manager as timestamp_manager
 import utils.path_manager as path_manager
 from config.constants import VideoConfig
+from utils.logger_config import VIDEO_LOGGER
 
 
 class VideoGenerator:
@@ -90,18 +91,26 @@ class VideoGenerator:
         Args:
             wait: 是否等待线程结束
         """
+        VIDEO_LOGGER.info("停止视频生成")
+
         if not self._is_generating:
-            print("✗ 视频生成未启动，跳过")
+            VIDEO_LOGGER.warning("视频生成未启动，跳过")
             return
 
         self._is_generating = False
 
         # 发送结束信号
         if hasattr(self, 'event_queue'):
-            self.event_queue.put(None)
+            try:
+                self.event_queue.put(None)
+            except Exception as e:
+                VIDEO_LOGGER.warning(f"发送结束信号失败: {e}")
 
         if wait and self._generator_thread:
-            self._generator_thread.join(timeout=5.0)
+            try:
+                self._generator_thread.join(timeout=5.0)
+            except Exception as e:
+                VIDEO_LOGGER.warning(f"等待线程结束超时: {e}")
 
     def wait_until_complete(self, timeout: float = 15.0) -> bool:
         """Wait until the active video file has been finalized."""
@@ -302,13 +311,16 @@ class VideoGenerator:
                 print(f"[Video Generator] Error during generation: {e}")
                 break
 
-        # 停止视频写入器
-        try:
-            if self.current_video_writer:
-                self.current_video_writer.release()
-        except:
-            pass
+        # 停止视频写入器（确保资源释放）
+        video_writer = self.current_video_writer
         self.current_video_writer = None
+        if video_writer:
+            try:
+                video_writer.release()
+                VIDEO_LOGGER.info("视频写入器已释放")
+            except Exception as e:
+                VIDEO_LOGGER.error(f"释放视频写入器失败: {e}")
+
         self._generation_complete = True  # 标记为完成
 
-        print(f"✓ Video generated: {frame_count} frames at {self.video_path}")
+        VIDEO_LOGGER.info(f"视频生成完成: {frame_count} 帧 - {self.video_path}")

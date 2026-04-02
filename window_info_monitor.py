@@ -271,7 +271,7 @@ class WindowInfoMonitor:
             # 获取窗口的根窗口（窗体）
             root_title = self.get_root_app_name_from_child_window()
             
-            print(f"获取窗口信息: handle={handle}, application_name={root_title}")
+            # print(f"获取窗口信息: handle={handle}, application_name={root_title}")
             # 获取窗口标题
             title = win32gui.GetWindowText(handle)
 

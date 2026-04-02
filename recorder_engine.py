@@ -10,7 +10,7 @@ import os
 import shutil
 from pathlib import Path
 from queue import Queue, Empty
-from typing import Optional, List, Callable
+from typing import Optional, List, Callable, Tuple
 from collections import deque
 from datetime import datetime
 
@@ -24,6 +24,7 @@ import utils.config_loader as config_loader
 import utils.timestamp_manager as timestamp_manager
 import utils.path_manager as path_manager
 from utils.file_manager import FileManager
+from utils.logger_config import APP_LOGGER as EVENT_LOGGER, VIDEO_LOGGER, RECODER_LOGGER
 from window_info_monitor import get_monitor
 
 
@@ -34,6 +35,13 @@ class RecorderEngine:
     """
 
     def __init__(self, config_path: str = "config.json"):
+        """初始化录制引擎
+
+        Args:
+            config_path: 配置文件路径
+        """
+        RECODER_LOGGER.info(f"初始化录制引擎 (config: {config_path})")
+        self.start_time = datetime.now()
         """初始化录制引擎
 
         Args:
@@ -104,7 +112,10 @@ class RecorderEngine:
     
         # 启动视频生成器（如果可用）
         if self.video_generator is not None:
-            self.video_generator.start_generating(self.session_id)
+            try:
+                self.video_generator.start_generating(self.session_id)
+            except Exception as e:
+                RECODER_LOGGER.warning(f"启动视频生成器失败: {e}")
 
         # 启动事件处理器
         event_config = EventHandlerConfig(
@@ -118,7 +129,11 @@ class RecorderEngine:
         self.event_handler.register_global_callback(self._process_raw_event)
 
         # 启动事件处理器
-        self.event_handler.start()
+        try:
+            self.event_handler.start()
+        except Exception as e:
+            RECODER_LOGGER.error(f"启动事件处理器失败: {e}")
+            raise
 
         # 更新录制状态
         self.is_recording = True
@@ -126,7 +141,7 @@ class RecorderEngine:
         if self._status_callback:
             self._status_callback("recording_started", {"session_id": self.session_id})
 
-        print(f"Recording started: {self.session_id}")
+        RECODER_LOGGER.info(f"会话已开始: {self.session_id}")
         return self.session_id
 
     def stop_recording(self, message_name: str = None) -> List[OperationEvent]:
@@ -139,38 +154,47 @@ class RecorderEngine:
             List[OperationEvent]: 录制的事件列表
         """
         if not self.is_recording:
-            raise RuntimeError("Not recording")
+            raise RuntimeError("未在录制中")
 
-        # 停止事件处理器
-        if hasattr(self, 'event_handler'):
-            self.event_handler.stop()
+        RECODER_LOGGER.info(f"停止录制: message_name={message_name}")
 
-        # 捕获结束事件
-        self.current_session = SessionEndEvent(self.session_id, len(self.session_events))
+        try:
+            # 停止事件处理器
+            if hasattr(self, 'event_handler'):
+                self.event_handler.stop()
 
-        # 更新录制状态
-        self.is_recording = False
+            # 捕获结束事件
+            self.current_session = SessionEndEvent(self.session_id, len(self.session_events))
 
-        if self._status_callback:
-            self._status_callback("recording_stopped", {
-                "session_id": self.session_id,
-                "event_count": len(self.session_events)
-            })
+            # 更新录制状态
+            self.is_recording = False
 
-        print(f"Recording stopped: {self.session_id}, events: {len(self.session_events)}")
+            if self._status_callback:
+                self._status_callback("recording_stopped", {
+                    "session_id": self.session_id,
+                    "event_count": len(self.session_events)
+                })
 
-        # 如果提供了消息名称，使用消息名称文件夹保存文件
-        if message_name:
-            message_name = FileManager.sanitize_filename(message_name)
-            self.save_to_csv_with_message_name(message_name)
-            self.save_to_json_with_message_name(message_name)
-            # 视频文件需要手动重命名
-            self._rename_video_file(message_name)
-        else:
-            print("未提供消息名称，跳过文件导出")
+            RECODER_LOGGER.info(f"会话已结束: {self.session_id}, 事件数: {len(self.session_events)}")
 
-        # 返回所有事件
-        return list(self.session_events)
+            # 如果提供了消息名称，使用消息名称文件夹保存文件
+            if message_name:
+                message_name = FileManager.sanitize_filename(message_name)
+                try:
+                    self.save_to_csv_with_message_name(message_name)
+                    self.save_to_json_with_message_name(message_name)
+                    # 视频文件需要手动重命名
+                    self._rename_video_file(message_name)
+                except Exception as e:
+                    RECODER_LOGGER.error(f"保存文件失败: {e}")
+            else:
+                RECODER_LOGGER.warning("未提供消息名称，跳过文件导出")
+
+            # 返回所有事件
+            return list(self.session_events)
+        finally:
+            self.is_recording = False
+            RECODER_LOGGER.info(f"录制引擎已停止，总耗时: {(datetime.now() - self.start_time).total_seconds():.2f}秒")
     
     def _process_mouse_move_events(self, events: List[OperationEvent]) -> List[OperationEvent]:
         """预处理鼠标移动事件，合并连续的移动事件为开始/结束两条
@@ -619,20 +643,20 @@ class RecorderEngine:
     def pause_recording(self):
         """暂停录制"""
         if not self.is_recording:
-            raise RuntimeError("Not recording")
+            raise RuntimeError("未在录制中")
 
         self.is_paused = True
-        print("✓ 录制已暂停")
+        RECODER_LOGGER.info("录制已暂停")
 
     def resume_recording(self):
         """恢复录制"""
         if not self.is_recording:
-            raise RuntimeError("Not recording")
+            raise RuntimeError("未在录制中")
         if not self.is_paused:
-            raise RuntimeError("Not paused")
+            raise RuntimeError("当前未暂停")
 
         self.is_paused = False
-        print("✓ 录制已恢复")
+        RECODER_LOGGER.info("录制已恢复")
 
     def _get_window_info_at_position(self, x: int, y: int, detect_element: bool = True) -> dict:
         """获取指定位置的窗口信息和元素信息
