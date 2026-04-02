@@ -7,6 +7,7 @@ import win32gui
 import win32con
 import win32api
 import win32process
+import psutil
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass, field
 
@@ -16,6 +17,7 @@ class WindowInfo:
     """窗口信息类
 
     Attributes:
+        application_name: 应用程序名称（根窗口标题）
         handle: 窗口句柄
         title: 窗口标题
         class_name: 窗口类名
@@ -40,6 +42,7 @@ class WindowInfo:
     relative_coordinates: dict[str, int] = field(default_factory=lambda: {"x": 0, "y": 0, "width": 0, "height": 0})  # 相对于屏幕坐标的窗口坐标{x: left, y: top, width: width, height: height}
     style: int = 0
     extended_style: int = 0
+    application_name: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
@@ -129,6 +132,7 @@ class WindowInfoMonitor:
             # 如果没有找到窗口，返回空的窗口信息
             if not handle:
                 return WindowInfo(
+                    application_name="",
                     handle=0,
                     title="",
                     class_name="",
@@ -213,6 +217,44 @@ class WindowInfoMonitor:
             "height": height
         }
 
+    def get_root_app_name_from_child_window(self) -> str:
+         # 1. 获取当前弹窗句柄
+        popup_hwnd = win32gui.GetForegroundWindow()
+        if not popup_hwnd:
+            return None
+
+        # 2. 获取弹窗所属 PID（主窗口一定和它同一个进程）
+        _, pid = win32process.GetWindowThreadProcessId(popup_hwnd)
+
+        # 3. 遍历所有窗口，找【同进程】【可见】【有长标题】的主窗口
+        # 排除弹窗这种短标题，只保留真正的主窗口
+        main_title = None
+
+        def enum_callback(hwnd, lParam):
+            nonlocal main_title
+            _, current_pid = win32process.GetWindowThreadProcessId(hwnd)
+            
+            if current_pid != pid:
+                return True
+            
+            if not win32gui.IsWindowVisible(hwnd):
+                return True
+
+            title = win32gui.GetWindowText(hwnd).strip()
+            
+            # ✅ 核心规则：主窗口标题一定很长，弹窗很短
+            if len(title) > 10 and "Recorder" in title:
+                main_title = title
+                return False  # 找到立刻停止遍历
+            return True
+
+        try:
+            win32gui.EnumWindows(enum_callback, None)
+        except:
+            pass
+
+        return main_title
+    
     def _get_window_info(self, handle: int) -> WindowInfo:
         """获取窗口信息
 
@@ -225,7 +267,11 @@ class WindowInfoMonitor:
         try:
             # 获取窗口类名（先获取）
             class_name = win32gui.GetClassName(handle)
-
+            
+            # 获取窗口的根窗口（窗体）
+            root_title = self.get_root_app_name_from_child_window()
+            
+            print(f"获取窗口信息: handle={handle}, application_name={root_title}")
             # 获取窗口标题
             title = win32gui.GetWindowText(handle)
 
@@ -246,6 +292,9 @@ class WindowInfoMonitor:
             # 获取窗口进程ID
             process_id = win32process.GetWindowThreadProcessId(handle)[1]
 
+            # 获取进程名称
+            process_name = self._get_process_name(process_id)
+
             # 获取窗口位置和尺寸
             rect = win32gui.GetWindowRect(handle)
 
@@ -258,9 +307,6 @@ class WindowInfoMonitor:
             enabled = win32gui.IsWindowEnabled(handle)
             active = (handle == win32gui.GetForegroundWindow())
 
-            # 获取进程名称
-            process_name = self._get_process_name(process_id)
-
             # 计算窗口相对于屏幕的坐标
             window_rect = {
                 "x": rect[0],
@@ -270,6 +316,7 @@ class WindowInfoMonitor:
             }
 
             window_info = WindowInfo(
+                application_name=root_title,
                 handle=handle,
                 title=title,
                 class_name=class_name,
@@ -343,7 +390,18 @@ class WindowInfoMonitor:
             if owner:
                 return self._get_window_info(owner)
 
-            return WindowInfo(0, "", "", 0, "")
+            return WindowInfo(
+                application_name="",
+                handle=0,
+                title="",
+                class_name="",
+                process_id=0,
+                process_name="",
+                visible=False,
+                enabled=False,
+                active=False,
+                rect=(0, 0, 0, 0)
+            )
 
         except Exception as e:
             print(f"获取拥有者窗口信息失败: {e}")
@@ -359,7 +417,6 @@ class WindowInfoMonitor:
             str: 进程名称
         """
         try:
-            import psutil
             process = psutil.Process(process_id)
             return process.name()
         except ImportError:
@@ -402,8 +459,6 @@ class WindowInfoMonitor:
         controls = []
 
         root_handle = win32gui.GetAncestor(window_handle, 2)
-        # 验证：获取根窗口标题
-        root_title = win32gui.GetWindowText(root_handle)
 
         try:
             # 枚举窗口控件
@@ -441,9 +496,6 @@ class WindowInfoMonitor:
 
         except Exception as e:
             print(f"获取窗口控件信息失败: {e}")
-        # if root_title=="模拟用户行为自动化工具 v1.0.0":
-        #     print(f"[Monitor] 共{len(controls)}个控件, 详情如下：{controls}")
-
 
         return controls
 
@@ -613,6 +665,7 @@ class WindowInfoMonitor:
             handle = win32gui.GetForegroundWindow()
             if not handle:
                 return WindowInfo(
+                    application_name="",
                     handle=0,
                     title="",
                     class_name="",
@@ -628,6 +681,7 @@ class WindowInfoMonitor:
         except Exception as e:
             print(f"获取活动窗口信息失败: {e}")
             return WindowInfo(
+                application_name="",
                 handle=0,
                 title="",
                 class_name="",

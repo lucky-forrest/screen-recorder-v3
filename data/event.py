@@ -141,6 +141,7 @@ class WindowSpecificInfo:
     包含鼠标操作时的窗口和控件信息。
 
     Attributes:
+        application_name: 应用程序名称
         window_handle: 窗口句柄
         window_title: 窗口标题
         window_class_name: 窗口类名
@@ -153,6 +154,7 @@ class WindowSpecificInfo:
         control_class_name: 控件类名
         control_text: 控件文本
     """
+    application_name: str = ""
     window_handle: int = 0
     window_title: str = ""
     window_class_name: str = ""

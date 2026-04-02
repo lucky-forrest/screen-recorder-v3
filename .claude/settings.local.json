@@ -27,7 +27,8 @@
       "Bash(find . -type f -name *.py -exec grep -l \"print.*调试\\\\|print.*测试\\\\|# TODO\\\\|# FIXME\" {})",
       "Bash(2)",
       "Bash(find . -type f -name *.py -exec grep -l 'if __name__.*__main__' {})",
-      "Bash(grep -r \"# test\\\\|# 测试\\\\|print.*Test\\\\|print.*调试\" --include=*.py .)"
+      "Bash(grep -r \"# test\\\\|# 测试\\\\|print.*Test\\\\|print.*调试\" --include=*.py .)",
+      "Bash(git commit:*)"
     ]
   }
 }

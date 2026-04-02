@@ -24,6 +24,7 @@ import utils.config_loader as config_loader
 import utils.timestamp_manager as timestamp_manager
 import utils.path_manager as path_manager
 from utils.file_manager import FileManager
+from window_info_monitor import get_monitor
 
 
 class RecorderEngine:
@@ -484,17 +485,14 @@ class RecorderEngine:
                 element_info = None
                 detect_element = self.config["ui_detection"].get("enabled", True)
 
+                monitor = get_monitor()
+                active_window = monitor.get_active_window_info()
                 if event_type == "key_press" or event_type == "key_release":
                     # 键盘事件使用活动窗口
                     try:
-                        from window_info_monitor import get_monitor
-                        monitor = get_monitor()
-                        active_window = monitor.get_active_window_info()
-                        # if window_info.window_title == self.application_name:
-                        #     print(f"[Keyboard] Active window: {active_window})")
-
                         # 构建窗口信息
                         window_info = WindowSpecificInfo(
+                            application_name=active_window.application_name,
                             window_handle=active_window.handle,
                             window_title=active_window.title,
                             window_class_name=active_window.class_name,
@@ -538,8 +536,8 @@ class RecorderEngine:
                     op_event.element_info = element_info
 
                 # 检查窗口信息是否存在
-                if op_event.window_info and self.application_name:
-                    if self.application_name.lower() == op_event.window_info.window_title.lower():
+                if op_event.window_info and op_event.window_info.application_name and self.application_name:
+                    if self.application_name.lower() == op_event.window_info.application_name.lower():
                         self.session_events.append(op_event)
                 # 发送到视频生成器
                 try:
@@ -650,7 +648,7 @@ class RecorderEngine:
         result = {"window_info": None, "element_info": None}
 
         try:
-            from window_info_monitor import get_monitor
+            
 
             monitor = get_monitor()
             window_info = monitor.get_current_window_info()
@@ -660,6 +658,7 @@ class RecorderEngine:
 
             # 构建窗口特定信息
             window_specific_info = WindowSpecificInfo(
+                application_name=window_info.application_name or "",
                 window_handle=window_info.handle or 0,
                 window_title=window_info.title or "",
                 window_class_name=window_info.class_name or "",
