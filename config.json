@@ -7,7 +7,7 @@
     "recording": {
         "enabled": true,
         "event_queue_size": 10000,
-        "application_name": "Advanced Computer Operation Recorder"
+        "application_name": "配方管理客户端"
     },
     "video": {
         "enabled": true,

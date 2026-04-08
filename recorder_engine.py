@@ -272,7 +272,7 @@ class RecorderEngine:
                     'window_handle', 'window_class_name',
                     'window_process_id', 'window_process_name',
                     'window_visible', 'window_enabled', 'window_active',
-                    'control_handle', 'control_class_name', 'control_text', 'rect','relative_coordinates'
+                    'control_handle', 'control_class_name', 'control_text', 'rect','relative_coordinates', 'application_name'
                 ])
 
                 # 写入事件数据
@@ -313,7 +313,8 @@ class RecorderEngine:
                             export_data['control_class_name'],
                             export_data['control_text'],
                             rect_str,
-                            relative_coordinates 
+                            relative_coordinates,
+                            export_data['application_name']
                         ])
                     except (IOError, OSError) as e:
                         print(f"Error writing event to CSV: {e}")

@@ -218,42 +218,57 @@ class WindowInfoMonitor:
         }
 
     def get_root_app_name_from_child_window(self) -> str:
-         # 1. 获取当前弹窗句柄
-        popup_hwnd = win32gui.GetForegroundWindow()
-        if not popup_hwnd:
+        """从当前活动的子窗口获取主窗口应用名称
+
+        逻辑：
+        1. 获取当前活动窗口的PID
+        2. 枚举所有同进程的窗口
+        3. 选择标题最长的可见窗口作为主窗口
+        4. 如果找到多个长标题窗口，返回第一个
+        """
+        # 1. 获取当前活动窗口句柄和PID
+        current_hwnd = win32gui.GetForegroundWindow()
+        if not current_hwnd:
             return None
 
-        # 2. 获取弹窗所属 PID（主窗口一定和它同一个进程）
-        _, pid = win32process.GetWindowThreadProcessId(popup_hwnd)
+        _, pid = win32process.GetWindowThreadProcessId(current_hwnd)
 
-        # 3. 遍历所有窗口，找【同进程】【可见】【有长标题】的主窗口
-        # 排除弹窗这种短标题，只保留真正的主窗口
-        main_title = None
+        # 2. 准备收集所有同进程的可见窗口
+        candidate_windows = []
 
         def enum_callback(hwnd, lParam):
-            nonlocal main_title
             _, current_pid = win32process.GetWindowThreadProcessId(hwnd)
-            
-            if current_pid != pid:
-                return True
-            
-            if not win32gui.IsWindowVisible(hwnd):
-                return True
 
-            title = win32gui.GetWindowText(hwnd).strip()
-            
-            # ✅ 核心规则：主窗口标题一定很长，弹窗很短
-            if len(title) > 10 and "Recorder" in title:
-                main_title = title
-                return False  # 找到立刻停止遍历
-            return True
+            # 只收集同进程的可见窗口
+            if current_pid == pid and win32gui.IsWindowVisible(hwnd):
+                title = win32gui.GetWindowText(hwnd).strip()
+                if title:  # 只收集有标题的窗口
+                    candidate_windows.append({
+                        'hwnd': hwnd,
+                        'title': title,
+                        'length': len(title)
+                    })
+
+            return True  # 继续枚举所有窗口
 
         try:
             win32gui.EnumWindows(enum_callback, None)
-        except:
-            pass
+        except Exception as e:
+            print(f"枚举窗口时出错: {e}")
 
-        return main_title
+        # 3. 如果没有找到任何候选窗口
+        if not candidate_windows:
+            return None
+
+        # 4. 按标题长度排序，选择最长的标题作为主窗口
+        # 通常主窗口会有更长的描述性标题
+        candidate_windows.sort(key=lambda x: x['length'], reverse=True)
+
+        # 返回最长标题的窗口
+        main_window = candidate_windows[0]
+        # print(f"找到主窗口: {main_window['title']} (长度: {main_window['length']})")
+
+        return main_window['title']
     
     def _get_window_info(self, handle: int) -> WindowInfo:
         """获取窗口信息
@@ -271,7 +286,7 @@ class WindowInfoMonitor:
             # 获取窗口的根窗口（窗体）
             root_title = self.get_root_app_name_from_child_window()
             
-            # print(f"获取窗口信息: handle={handle}, application_name={root_title}")
+            print(f"获取窗口信息: handle={handle}, application_name={root_title}")
             # 获取窗口标题
             title = win32gui.GetWindowText(handle)
 

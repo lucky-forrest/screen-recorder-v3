@@ -185,6 +185,7 @@ class WindowSpecificInfo:
             "control_text": self.control_text,
             "rect": self.rect if self.rect and all(v > 0 for v in self.rect) else (0, 0, 0, 0),
             "relative_coordinates": self.relative_coordinates if self.relative_coordinates  else {"x": 0, "y": 0, "width": 0, "height": 0},
+            "application_name": self.application_name,
         }
 
 
@@ -242,6 +243,7 @@ class OperationEvent:
             "control_text": "",
             "rect": self.element_info.bounding_box if self.element_info and self.element_info.bounding_box else (0, 0, 0, 0),
             "relative_coordinates": self.window_info.relative_coordinates if self.window_info  else {"x": 0, "y": 0, "width": 0, "height": 0},
+            "application_name": self.application_name or "",
         }
 
         # 添加窗口信息
