@@ -9,8 +9,8 @@ import time
 import os
 import shutil
 from pathlib import Path
-from queue import Queue, Empty
-from typing import Optional, List, Callable, Tuple
+from queue import Queue
+from typing import Optional, List, Callable
 from collections import deque
 from datetime import datetime
 
@@ -42,11 +42,7 @@ class RecorderEngine:
         """
         RECODER_LOGGER.info(f"初始化录制引擎 (config: {config_path})")
         self.start_time = datetime.now()
-        """初始化录制引擎
 
-        Args:
-            config_path: 配置文件路径
-        """
         # 加载配置
         self.config = config_loader.load_config(config_path)
         self.path_manager = path_manager.PathManager(config_path)
@@ -62,6 +58,12 @@ class RecorderEngine:
         # 事件队列
         self.event_queue: Queue = Queue(maxsize=self.config["recording"]["event_queue_size"])
         self.session_events: deque = deque(maxlen=10000)
+
+        # 性能优化相关
+        self._last_window_info: dict = {}  # 窗口句柄缓存
+        self._last_control_info: dict = {}  # 控件句柄缓存
+        self._last_move_time: float = 0  # 上次UI检测时间
+        self._move_throttle_interval = 0.05  # UI检测节流间隔（秒），默认50ms
 
         # UI元素检测器
         self.textbox_detector = TextBoxDetector(
@@ -83,6 +85,10 @@ class RecorderEngine:
 
         # 线程锁
         self._lock = threading.Lock()
+
+        # 性能优化：日志频率控制
+        self._log_counter = 0
+        self._log_interval = 50  # 每50次至少打印一次日志
 
     def start_recording(self, application_name: str = None) -> str:
         """开始录制
@@ -120,7 +126,8 @@ class RecorderEngine:
         # 启动事件处理器
         event_config = EventHandlerConfig(
             keyboard_enabled=self.config["ui_detection"].get("enabled", True),
-            mouse_enabled=self.config["ui_detection"].get("enabled", True)
+            mouse_enabled=self.config["ui_detection"].get("enabled", True),
+            scroll_enabled=self.config["ui_detection"].get("enabled", True)
         )
 
         self.event_handler = EventHandler(event_config)
@@ -272,7 +279,8 @@ class RecorderEngine:
                     'window_handle', 'window_class_name',
                     'window_process_id', 'window_process_name',
                     'window_visible', 'window_enabled', 'window_active',
-                    'control_handle', 'control_class_name', 'control_text', 'rect','relative_coordinates', 'application_name'
+                    'control_handle', 'control_class_name', 'control_text', 'rect', 'relative_coordinates', 'application_name',
+                    'scroll_delta', 'drag_delta'
                 ])
 
                 # 写入事件数据
@@ -314,7 +322,9 @@ class RecorderEngine:
                             export_data['control_text'],
                             rect_str,
                             relative_coordinates,
-                            export_data['application_name']
+                            export_data['application_name'],
+                            export_data.get('scroll_delta', ''),
+                            export_data.get('drag_delta', '')
                         ])
                     except (IOError, OSError) as e:
                         print(f"Error writing event to CSV: {e}")
@@ -487,6 +497,14 @@ class RecorderEngine:
         x = event_data.get("x", 0)
         y = event_data.get("y", 0)
 
+        # 性能优化：对鼠标移动事件进行节流，避免频繁的UI检测
+        current_time = time.time()
+        if event_type == "mouse_move":
+            # 只有距离上次UI检测超过阈值时才进行UI检测
+            if current_time - self._last_move_time < self._move_throttle_interval:
+                return  # 跳过本次UI检测，减少性能开销
+            self._last_move_time = current_time
+
         try:
             # 创建操作事件
             op_event = None
@@ -496,6 +514,10 @@ class RecorderEngine:
             elif event_type == "mouse_click":
                 # print(f"[Mouse Handler] Mouse click event: {event_data}")
                 op_event = self._create_operation_event_from_mouse(event_data)
+            elif event_type == "mouse_scroll":
+                op_event = self._create_operation_event_from_mouse_scroll(event_data)
+            elif event_type == "mouse_drag":
+                op_event = self._create_operation_event_from_mouse_drag(event_data)
             elif event_type == "mouse_move":
                 # 鼠标移动时也添加事件用于捕捉窗口信息
                 op_event = OperationEvent(
@@ -545,13 +567,11 @@ class RecorderEngine:
                                 print("[Keyboard] ElementRecognizer not available, skipping element detection")
                     except Exception as e:
                         print(f"获取活动窗口信息失败: {e}")
-                elif event_type == "mouse_click" or event_type == "mouse_move":
+                elif event_type == "mouse_click" or event_type == "mouse_move" or event_type == "mouse_scroll":
                     # 鼠标事件使用鼠标位置对应的窗口和元素
                     result = self._get_window_info_at_position(x, y, detect_element)
                     window_info = result["window_info"]
                     element_info = result["element_info"]
-                    # if window_info.window_title == self.application_name:
-                    #     print(f"[mouse] window info: {window_info})")
 
 
                 if window_info:
@@ -624,11 +644,6 @@ class RecorderEngine:
             Optional[OperationEvent]: 操作事件，或None
         """
         button = event_data.get("button", "left")
-        pressed = event_data.get("pressed", True)
-
-        # 只记录点击（按下）事件，不记录释放
-        if not pressed:
-            return None
 
         display_detail = f"Mouse {button} Click"
 
@@ -637,6 +652,72 @@ class RecorderEngine:
             detail=display_detail,
             coordinates=(event_data.get("x", 0), event_data.get("y", 0)),
             element_info=element_info if element_info and element_info.confidence > 0 else None
+        )
+
+        return op_event
+
+    def _create_operation_event_from_mouse_scroll(self, event_data: dict) -> Optional[OperationEvent]:
+        """从鼠标滚轮事件创建操作事件
+
+        Args:
+            event_data: 滚轮事件字典
+
+        Returns:
+            Optional[OperationEvent]: 操作事件，或None
+        """
+        delta_x = event_data.get("delta_x", 0)
+        delta_y = event_data.get("delta_y", 0)
+
+        # 只记录Y轴滚动，因为滚动条通常是垂直的
+        if delta_y == 0:
+            return None
+
+        direction = "down" if delta_y < 0 else "up"
+        display_detail = f"Mouse Scroll {direction}"
+
+        coordinates = (event_data.get("x", 0), event_data.get("y", 0))
+
+        op_event = OperationEvent(
+            event_type=EventType.MOUSE_SCROLL,
+            detail=display_detail,
+            coordinates=coordinates,
+            scroll_delta=delta_y
+        )
+
+        return op_event
+
+    def _create_operation_event_from_mouse_drag(self, event_data: dict) -> Optional[OperationEvent]:
+        """从鼠标拖拽事件创建操作事件
+
+        Args:
+            event_data: 拖拽事件字典
+
+        Returns:
+            Optional[OperationEvent]: 操作事件，或None
+        """
+        dx = event_data.get("drag_delta", (0, 0))[0]
+        dy = event_data.get("drag_delta", (0, 0))[1]
+        button = event_data.get("button", "left")
+
+        # 过滤掉微小的移动，避免记录无意义的拖拽事件
+        if abs(dx) < 5 and abs(dy) < 5:
+            return None
+
+        direction = ""
+        if abs(dy) > abs(dx):
+            direction = "vertical" if dy > 0 else "vertical_reverse"
+        else:
+            direction = "horizontal" if dx > 0 else "horizontal_reverse"
+
+        display_detail = f"Mouse Drag {direction}"
+
+        coordinates = (event_data.get("x", 0), event_data.get("y", 0))
+
+        op_event = OperationEvent(
+            event_type=EventType.MOUSE_DRAG,
+            detail=display_detail,
+            coordinates=coordinates,
+            drag_delta=(dx, dy)
         )
 
         return op_event
@@ -804,3 +885,119 @@ class RecorderEngine:
             return "dropdown"
 
         return "other"
+
+    def _get_window_info_at_position_throttled(self, x: int, y: int, detect_element: bool = True) -> dict:
+        """获取指定位置的窗口信息和元素信息（带缓存优化）
+
+        Args:
+            x: X坐标
+            y: Y坐标
+            detect_element: 是否检测UI元素
+
+        Returns:
+            dict: {'window_info': WindowSpecificInfo, 'element_info': UIElementInfo}
+        """
+        # 使用哈希值作为缓存键
+        position_key = (x, y)
+
+        # 检查缓存
+        cache_key = f"{position_key}"
+        window_info = self._last_window_info.get(cache_key)
+        control_info = self._last_control_info.get(cache_key)
+
+        if window_info is not None and control_info is not None:
+            # 使用缓存的数据，构建返回结果
+            return {
+                "window_info": window_info,
+                "element_info": None if not detect_element else self._build_element_info_from_control(control_info, window_info)
+            }
+
+        try:
+            monitor = get_monitor()
+            window_info_obj = monitor.get_current_window_info()
+
+            # 缓存窗口信息
+            self._last_window_info[cache_key] = window_info_obj
+
+            control_info_obj = None
+            if detect_element:
+                control_info_obj = monitor.get_hovered_control_info(require_text=False)
+                # 缓存控件信息
+                self._last_control_info[cache_key] = control_info_obj
+
+            # 构建窗口特定信息
+            window_specific_info = WindowSpecificInfo(
+                application_name=window_info_obj.application_name or "",
+                window_handle=window_info_obj.handle or 0,
+                window_title=window_info_obj.title or "",
+                window_class_name=window_info_obj.class_name or "",
+                window_process_id=window_info_obj.process_id or 0,
+                window_process_name=window_info_obj.process_name or "",
+                window_visible=window_info_obj.visible,
+                window_enabled=window_info_obj.enabled,
+                window_active=window_info_obj.active,
+                control_handle=control_info_obj.handle if control_info_obj and control_info_obj.handle > 0 else 0,
+                control_class_name=control_info_obj.class_name if control_info_obj else "",
+                control_text=control_info_obj.text if control_info_obj else "",
+                rect=window_info_obj.rect,
+                relative_coordinates=window_info_obj.relative_coordinates
+            )
+
+            # 构建UI元素信息
+            element_info = None
+            if detect_element and control_info_obj:
+                element_info = self._build_element_info_from_control(control_info_obj, window_info_obj)
+
+            result = {
+                "window_info": window_specific_info,
+                "element_info": element_info
+            }
+
+            # 限制缓存大小，避免内存占用过高
+            if len(self._last_window_info) > 100:
+                # 移除最旧的缓存条目
+                oldest_key = next(iter(self._last_window_info))
+                del self._last_window_info[oldest_key]
+                del self._last_control_info[oldest_key]
+
+            return result
+
+        except Exception as e:
+            print(f"获取窗口信息失败: {e}")
+            return {"window_info": None, "element_info": None}
+
+    def _build_element_info_from_control(self, control_info, window_info) -> UIElementInfo:
+        """从控件信息构建UI元素信息
+
+        Args:
+            control_info: 控件信息对象
+            window_info: 窗口信息对象
+
+        Returns:
+            UIElementInfo: UI元素信息
+        """
+        try:
+            from data.event import UIElementType, UIElementInfo
+
+            # 根据控件类名推断元素类型
+            element_type_str = self._detect_element_type(control_info)
+
+            # 构造UIElementInfo
+            element_content = (
+                control_info.text if control_info.text else
+                control_info.caption if control_info.caption else
+                "未检测到文本"
+            )
+
+            # 根据推断的类型转换
+            element_type = getattr(UIElementType, element_type_str.upper(), UIElementType.OTHER)
+
+            return UIElementInfo(
+                element_type=element_type,
+                element_content=element_content,
+                bounding_box=control_info.rect,
+                confidence=0.9,  # 使用句柄信息，置信度高
+                state={"window_handle": window_info.handle, "control_handle": control_info.handle}
+            )
+        except Exception:
+            return None

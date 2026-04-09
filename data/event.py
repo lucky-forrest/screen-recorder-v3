@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 
 
 class EventType(Enum):
@@ -18,6 +18,7 @@ class EventType(Enum):
     MOUSE_MOVE = "mouse_move"
     MOUSE_CLICK = "mouse_click"
     MOUSE_SCROLL = "mouse_scroll"
+    MOUSE_DRAG = "mouse_drag"
     WINDOW_CHANGE = "window_change"
     UI_ELEMENT_INTERACTION = "ui_element_interaction"
 
@@ -81,6 +82,7 @@ class MouseEvent:
         y: Y坐标
         button: 鼠标按钮
         scroll_delta: 滚轮滚动距离（滚动事件时有效）
+        drag_delta: 拖拽距离（拖拽事件时有效）
         timestamp: 时间戳
     """
     event_type: EventType
@@ -88,6 +90,7 @@ class MouseEvent:
     y: int
     button: Optional[MouseButton] = None
     scroll_delta: int = 0
+    drag_delta: Tuple[int, int] = (0, 0)  # (dx, dy)
     timestamp: datetime = field(default_factory=datetime.now)
 
     def __post_init__(self):
@@ -219,6 +222,8 @@ class OperationEvent:
     timestamp: datetime = field(default_factory=datetime.now)
     operation_category: Optional[str] = None
     show_behavior_marker: bool = True
+    scroll_delta: int = 0
+    drag_delta: Optional[Tuple[int, int]] = None
 
     def get_export_dict(self) -> Dict[str, Any]:
         """获取导出字典，包含所有窗口信息（17个字段与CSV头一致）"""
@@ -244,6 +249,7 @@ class OperationEvent:
             "rect": self.element_info.bounding_box if self.element_info and self.element_info.bounding_box else (0, 0, 0, 0),
             "relative_coordinates": self.window_info.relative_coordinates if self.window_info  else {"x": 0, "y": 0, "width": 0, "height": 0},
             "application_name": self.application_name or "",
+            "scroll_delta": self.scroll_delta if hasattr(self, 'scroll_delta') else 0,
         }
 
         # 添加窗口信息
@@ -283,6 +289,7 @@ class OperationEvent:
             "application_name": self.application_name or "",
             "rect": self.element_info.bounding_box if self.element_info and self.element_info.bounding_box else (0, 0, 0, 0),
             "relative_coordinates": self.window_info.relative_coordinates if self.window_info else relative_coords_default,
+            "scroll_delta": self.scroll_delta if hasattr(self, 'scroll_delta') else 0,
 
         }
 
@@ -290,6 +297,10 @@ class OperationEvent:
             event_data["element_confidence"] = self.element_info.confidence
             event_data["element_state"] = self.element_info.state
             event_data["rect"] = self.element_info.bounding_box
+
+        # 添加拖拽信息（如果存在）
+        if hasattr(self, 'drag_delta') and isinstance(self.drag_delta, tuple) and len(self.drag_delta) == 2:
+            event_data["drag_delta"] = self.drag_delta
 
         if self.window_info:
             event_data.update(self.window_info.to_dict())

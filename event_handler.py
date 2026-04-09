@@ -216,6 +216,8 @@ class MouseHandler:
         self._global_callbacks: list[Callable] = []
         self.is_running = False
         self._last_position = (0, 0)
+        self._drag_start: Tuple[int, int] = None
+        self._is_dragging = False
 
     def register_global_callback(self, callback: Callable[[dict], None]):
         """注册全局回调函数
@@ -309,20 +311,55 @@ class MouseHandler:
 
         button_name = button.name.lower()
 
-        event_dict = {
-            'event_type': 'mouse_click',
-            'x': x,
-            'y': y,
-            'button': button_name,
-            'pressed': pressed,
-            'timestamp': datetime.now().isoformat()
-        }
-
-        self._process_event(event_dict)
-
-        # 记录最后一次点击位置
         if pressed:
-            self._last_position = (x, y)
+            # 记录点击起始位置（用于拖拽检测）
+            self._drag_start = (x, y)
+            self._is_dragging = False
+
+            # 如果是左键，标记可以检测拖拽
+            if button_name == "left":
+                self._is_dragging = True
+
+            # 只在按下时记录一次点击事件（避免重复记录）
+            event_dict = {
+                'event_type': 'mouse_click',
+                'x': x,
+                'y': y,
+                'button': button_name,
+                'pressed': True,
+                'timestamp': datetime.now().isoformat()
+            }
+            self._process_event(event_dict)
+
+            # 释放鼠标时判断是否为拖拽
+            drag_detected = False
+            drag_distance = (0, 0)
+
+            if self._is_dragging and self._drag_start:
+                # 计算拖拽距离
+                drag_distance = (x - self._drag_start[0], y - self._drag_start[1])
+                # 设置拖拽阈值，超过这个距离认为是拖拽
+                if abs(drag_distance[0]) > 5 or abs(drag_distance[1]) > 5:
+                    drag_detected = True
+
+            if drag_detected:
+                # 记录拖拽事件
+                event_dict = {
+                    'event_type': 'mouse_drag',
+                    'x': x,
+                    'y': y,
+                    'drag_delta': drag_distance,
+                    'button': button_name,
+                    'timestamp': datetime.now().isoformat()
+                }
+                self._process_event(event_dict)
+
+            # 重置拖拽状态
+            self._is_dragging = False
+            self._drag_start = None
+
+        # 记录最后的位置
+        self._last_position = (x, y)
 
     def _on_scroll(self, x, y, dx, dy):
         """pynput滚轮滚动回调"""
